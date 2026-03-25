@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Amazon DE Sales Dashboard - Auto Sync</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Phosphor Icons -->
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <!-- SheetJS (Excel Parsing) -->
+    <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        dark: '#0f172a',
+                        darker: '#020617',
+                        card: '#1e293b',
+                        primary: '#3b82f6',
+                        secondary: '#10b981',
+                        accent: '#f59e0b'
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { background-color: #0f172a; color: #f8fafc; font-family: 'Pretendard', -apple-system, sans-serif; }
+        .chart-container { position: relative; height: 350px; width: 100%; }
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #1e293b; }
+        ::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #64748b; }
+        
+        /* 로딩 스피너 애니메이션 */
+        .spinner { border: 4px solid rgba(255, 255, 255, 0.1); border-left-color: #10b981; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body class="min-h-screen p-4 md:p-8">
+
+    <!-- Loading Overlay -->
+    <div id="loading" class="fixed inset-0 bg-darker/80 z-50 flex flex-col justify-center items-center backdrop-blur-sm hidden">
+        <div class="spinner mb-4"></div>
+        <p class="text-gray-300 font-medium tracking-wide">구글 시트에서 최신 데이터를 연동하고 있습니다...</p>
+    </div>
+
+    <!-- Header -->
+    <header class="flex flex-col md:flex-row justify-between items-center mb-8 gap-4 bg-card p-6 rounded-2xl border border-gray-700 shadow-lg">
+        <div>
+            <div class="flex items-center gap-3">
+                <i class="ph-fill ph-amazon-logo text-white bg-[#FF9900] p-1.5 rounded-lg text-2xl"></i>
+                <h1 class="text-3xl font-bold">Amazon DE 성과 대시보드</h1>
+                <span id="dataStatusBadge" class="bg-gray-500/20 text-gray-400 border border-gray-500/50 px-2.5 py-1 rounded-md text-xs font-semibold">동기화 대기중</span>
+            </div>
+            <p class="text-gray-400 mt-2 text-sm">Google Sheets 실시간 연동 (일별 Sales, Units Sold, Sessions)</p>
+        </div>
+        
+        <div class="flex items-center gap-3 bg-darker px-4 py-2 rounded-xl border border-gray-600 shadow-inner">
+            <i class="ph ph-funnel text-gray-400"></i>
+            <!-- 독립형 교차 필터: Category & Product -->
+            <select id="categoryFilter" class="bg-transparent border-none text-white text-sm font-medium focus:ring-0 outline-none cursor-pointer appearance-none">
+                <option value="All">전체 카테고리 (Category)</option>
+            </select>
+            <span class="text-gray-600 px-1">|</span>
+            <select id="productFilter" class="bg-transparent border-none text-white text-sm font-medium focus:ring-0 outline-none cursor-pointer appearance-none">
+                <option value="All">전체 라인업 (Product)</option>
+            </select>
+        </div>
+        
+        <div class="ml-4">
+            <!-- 수동 업로드 대신 구글 시트 동기화 버튼으로 변경 -->
+            <button onclick="fetchGoogleSheetData()" class="flex items-center gap-2 bg-secondary hover:bg-emerald-600 text-white px-5 py-2.5 rounded-xl cursor-pointer transition-all duration-200 shadow-lg shadow-emerald-500/20 font-medium">
+                <i class="ph ph-arrows-clockwise text-xl"></i>
+                <span>최신 데이터 동기화</span>
+            </button>
+        </div>
+    </header>
+
+    <!-- KPI Cards -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+        <div class="bg-card rounded-2xl p-6 border border-gray-700 shadow-xl relative overflow-hidden group">
+            <div class="absolute -right-6 -top-6 w-24 h-24 bg-blue-500/10 rounded-full blur-2xl group-hover:bg-blue-500/20 transition-all"></div>
+            <div class="flex justify-between items-start">
+                <div>
+                    <p class="text-gray-400 text-sm font-medium mb-1">총 매출 (선택 기간 합계)</p>
+                    <h2 class="text-3xl font-bold text-white tracking-tight" id="kpiRevenue">€0</h2>
+                </div>
+                <div class="p-3 bg-blue-500/20 rounded-xl border border-blue-500/30">
+                    <i class="ph ph-currency-eur text-2xl text-blue-400"></i>
+                </div>
+            </div>
+        </div>
+        
+        <div class="bg-card rounded-2xl p-6 border border-gray-700 shadow-xl relative overflow-hidden group">
+            <div class="absolute -right-6 -top-6 w-24 h-24 bg-purple-500/10 rounded-full blur-2xl group-hover:bg-purple-500/20 transition-all"></div>
+            <div class="flex justify-between items-start">
+                <div>
+                    <p class="text-gray-400 text-sm font-medium mb-1">총 판매량 (Units Sold)</p>
+                    <h2 class="text-3xl font-bold text-white tracking-tight" id="kpiVolume">0 개</h2>
+                </div>
+                <div class="p-3 bg-purple-500/20 rounded-xl border border-purple-500/30">
+                    <i class="ph ph-package text-2xl text-purple-400"></i>
+                </div>
+            </div>
+        </div>
+
+        <div class="bg-card rounded-2xl p-6 border border-gray-700 shadow-xl relative overflow-hidden group">
+            <div class="absolute -right-6 -top-6 w-24 h-24 bg-emerald-500/10 rounded-full blur-2xl group-hover:bg-emerald-500/20 transition-all"></div>
+            <div class="flex justify-between items-start">
+                <div>
+                    <p class="text-gray-400 text-sm font-medium mb-1">총 유입수 (Sessions)</p>
+                    <h2 class="text-3xl font-bold text-white tracking-tight" id="kpiTraffic">0 명</h2>
+                </div>
+                <div class="p-3 bg-emerald-500/20 rounded-xl border border-emerald-500/30">
+                    <i class="ph ph-users text-2xl text-emerald-400"></i>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Charts Section -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+        <!-- Chart 1: Sales (Line) & Units Sold (Bar) -->
+        <div class="bg-card rounded-2xl p-6 border border-gray-700 shadow-xl">
+            <div class="flex items-center justify-between mb-6">
+                <h3 class="text-lg font-semibold flex items-center gap-2">
+                    <i class="ph ph-chart-line-up text-blue-400"></i> 
+                    매출(Sales) & 판매량(Units Sold) 추이
+                </h3>
+            </div>
+            <div class="chart-container">
+                <canvas id="salesVolumeChart"></canvas>
+            </div>
+        </div>
+
+        <!-- Chart 2: Sessions (Line) -->
+        <div class="bg-card rounded-2xl p-6 border border-gray-700 shadow-xl">
+            <div class="flex items-center justify-between mb-6">
+                <h3 class="text-lg font-semibold flex items-center gap-2">
+                    <i class="ph ph-cursor-click text-emerald-400"></i> 
+                    유입수(Sessions) 추이
+                </h3>
+            </div>
+            <div class="chart-container">
+                <canvas id="trafficChart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <!-- Data Table Section -->
+    <div class="bg-card rounded-2xl border border-gray-700 shadow-xl overflow-hidden mb-12">
+        <div class="p-6 border-b border-gray-700 bg-gray-800/30">
+            <h3 class="text-lg font-semibold flex items-center gap-2">
+                <i class="ph ph-table text-gray-400"></i> 조건별 상세 성과
+            </h3>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="w-full text-left text-sm">
+                <thead class="bg-darker/50 text-gray-400 uppercase text-xs tracking-wider">
+                    <tr>
+                        <th class="px-6 py-4 font-medium">ASIN</th>
+                        <th class="px-6 py-4 font-medium">Category (D열)</th>
+                        <th class="px-6 py-4 font-medium">Product (E열)</th>
+                        <th class="px-6 py-4 font-medium text-right">Total Sales (€)</th>
+                        <th class="px-6 py-4 font-medium text-right">Units Sold</th>
+                        <th class="px-6 py-4 font-medium text-right">Sessions</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-700" id="tableBody">
+                    <tr><td colspan="6" class="text-center py-12 text-gray-500">데이터를 불러오는 중입니다...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        // Chart.js Global Settings
+        Chart.defaults.color = '#94a3b8';
+        Chart.defaults.borderColor = 'rgba(51, 65, 85, 0.5)';
+        Chart.defaults.font.family = "'Pretendard', -apple-system, sans-serif";
+
+        const formatEur = (num) => new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' }).format(num);
+        const formatNum = (num) => new Intl.NumberFormat('en-US').format(num);
+
+        let globalDates = [];
+        let globalParsedData = [];
+        let salesVolumeChartInstance = null;
+        let trafficChartInstance = null;
+
+        // 고객님이 제공하신 구글 시트 CSV 링크
+        const GOOGLE_SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRfNx4DSlK4pk21magEzPZ318RI3FCxBUYZXQcQZKjTjVvT378Zss0u4rdmkw-u3gu9yS_FTu1hmwpH/pub?gid=171053148&single=true&output=csv";
+
+        // 구글 시트 데이터 자동 패칭 함수
+        async function fetchGoogleSheetData() {
+            const loading = document.getElementById('loading');
+            loading.classList.remove('hidden');
+
+            try {
+                // 로컬 PC 환경(보안 정책, CORS) 오류를 방지하기 위해 우회 프록시(Proxy)를 거쳐서 가져옵니다.
+                const proxyUrl = "https://api.allorigins.win/raw?url=" + encodeURIComponent(GOOGLE_SHEET_CSV_URL);
+                const response = await fetch(proxyUrl);
+                
+                if (!response.ok) throw new Error('네트워크 응답에 문제가 있습니다.');
+                
+                const arrayBuffer = await response.arrayBuffer();
+                const data = new Uint8Array(arrayBuffer);
+                const workbook = XLSX.read(data, {type: 'array', raw: false});
+                
+                // CSV는 무조건 단일 시트이므로 첫 번째 시트 사용
+                const targetSheetName = workbook.SheetNames[0];
+                const worksheet = workbook.Sheets[targetSheetName];
+                const jsonData = XLSX.utils.sheet_to_json(worksheet, {header: 1, raw: false, defval: null});
+                
+                parseAndInitDashboard(jsonData);
+            } catch (error) {
+                console.error("데이터 패칭 에러 상세:", error);
+                alert("구글 시트 데이터를 불러오는 중 오류가 발생했습니다.\n\n1. 잠시 후 다시 시도해주세요. (프록시 서버 지연)\n2. 구글 시트에서 [파일] > [공유] > [웹에 게시]를 완전히 마쳤는지 확인해주세요.\n\n상세 에러: " + error.message);
+            } finally {
+                loading.classList.add('hidden');
+            }
+        }
+
+        function parseAndInitDashboard(rows) {
+            if (rows.length < 3) {
+                alert("데이터가 너무 적거나 포맷이 다릅니다. 원본 시트 형식을 확인해주세요.");
+                return;
+            }
+
+            const dateRow = rows[0];
+
+            globalDates = [];
+            const dateIndices = [];
+            const startCol = 5; // F열부터 (index 5)
+            const colStep = 6;  // 6개 열마다 반복
+
+            // [날짜 파싱 로직]
+            for (let i = startCol; i < dateRow.length; i += colStep) {
+                let cellValue = dateRow[i];
+                
+                // 만약 병합 셀 오류로 첫 칸이 비어있다면 주변 탐색
+                if (!cellValue) {
+                    for(let j=1; j<colStep; j++) {
+                        if (dateRow[i+j]) { cellValue = dateRow[i+j]; break; }
+                    }
+                }
+
+                if (cellValue && String(cellValue).trim() !== '') {
+                    let dStr = String(cellValue).trim();
+                    let formattedDate = dStr; 
+
+                    let match = dStr.match(/(\d{4})-(\d{2})-(\d{2})/);
+                    if (match) {
+                        formattedDate = `${match[2]}/${match[3]}`;
+                    } else if (dStr.includes('/')) {
+                        let parts = dStr.split('/');
+                        if(parts.length >= 2) formattedDate = `${parts[0].padStart(2,'0')}/${parts[1].padStart(2,'0')}`;
+                    }
+
+                    globalDates.push(formattedDate);
+                    dateIndices.push(i);
+                }
+            }
+
+            if (globalDates.length === 0) {
+                alert("1행에서 날짜(Date) 데이터를 인식할 수 없습니다.");
+                return;
+            }
+
+            globalParsedData = [];
+
+            // 제품별 데이터 집계 (3행부터 시작, rows[1]은 헤더)
+            for (let r = 2; r < rows.length; r++) {
+                const row = rows[r];
+                const asin = row[0];
+                
+                if (!asin || String(asin).trim() === '' || String(asin).trim().toUpperCase() === 'ASIN') continue;
+
+                const sku = row[1] || '-';
+                const category = row[3] || 'Uncategorized';
+                const productName = row[4] || 'Unknown';
+                
+                let prodTotalSales = 0;
+                let prodTotalUnits = 0;
+                let prodTotalSessions = 0;
+                const dailyDataList = [];
+
+                for (let i = 0; i < dateIndices.length; i++) {
+                    const c = dateIndices[i];
+                    
+                    // 강력한 숫자 변환 로직 (유로 기호 등 예외처리)
+                    const parseNumber = (val) => {
+                        if (val === null || val === undefined || val === '') return 0;
+                        if (typeof val === 'number') return val;
+                        
+                        let str = String(val).trim();
+                        str = str.replace(/[^0-9.,-]/g, '');
+                        if (!str) return 0;
+
+                        let lastComma = str.lastIndexOf(',');
+                        let lastDot = str.lastIndexOf('.');
+                        
+                        if (lastComma > lastDot) {
+                            str = str.replace(/\./g, '').replace(',', '.');
+                        } else {
+                            str = str.replace(/,/g, '');
+                        }
+
+                        return parseFloat(str) || 0;
+                    };
+
+                    const sales = parseNumber(row[c]);
+                    const units = parseNumber(row[c+1]);
+                    const sessions = parseNumber(row[c+2]);
+
+                    dailyDataList.push({ sales, units, sessions });
+
+                    prodTotalSales += sales;
+                    prodTotalUnits += units;
+                    prodTotalSessions += sessions;
+                }
+
+                globalParsedData.push({
+                    asin, sku, category, name: productName,
+                    sales: prodTotalSales, units: prodTotalUnits, sessions: prodTotalSessions,
+                    daily: dailyDataList
+                });
+            }
+
+            // 전체 기간 매출 순 정렬
+            globalParsedData.sort((a, b) => b.sales - a.sales);
+
+            // 1. 드롭다운 필터 고유값 추출
+            const uniqueCats = [...new Set(globalParsedData.map(d => d.category))];
+            const uniqueProds = [...new Set(globalParsedData.map(d => d.name))];
+
+            const categorySelect = document.getElementById('categoryFilter');
+            const productSelect = document.getElementById('productFilter');
+            
+            // 기존 옵션 초기화
+            categorySelect.innerHTML = '<option value="All">전체 카테고리 (Category)</option>';
+            productSelect.innerHTML = '<option value="All">전체 라인업 (Product)</option>';
+
+            uniqueCats.forEach(c => categorySelect.add(new Option(c, c)));
+            uniqueProds.forEach(p => productSelect.add(new Option(p, p)));
+
+            // 상태 뱃지 업데이트
+            const badge = document.getElementById('dataStatusBadge');
+            badge.className = "bg-emerald-500/20 text-emerald-400 border border-emerald-500/50 px-2.5 py-1 rounded-md text-xs font-semibold";
+            
+            const now = new Date();
+            const timeString = `${now.getHours()}:${String(now.getMinutes()).padStart(2, '0')} 동기화됨`;
+            badge.innerText = `🟢 실시간 연동 중 (${timeString})`;
+
+            updateDashboard();
+        }
+
+        // 선택된 드롭다운 값에 따라 대시보드 업데이트
+        function updateDashboard() {
+            if (globalDates.length === 0) return; // 데이터가 아직 없는 경우 방어
+
+            const catFilterValue = document.getElementById('categoryFilter').value;
+            const prodFilterValue = document.getElementById('productFilter').value;
+
+            let filteredProducts = globalParsedData;
+            
+            // 두 필터를 각각 독립적으로 평가 (AND 조건 교차 필터링)
+            if (catFilterValue !== 'All') {
+                filteredProducts = filteredProducts.filter(p => p.category === catFilterValue);
+            }
+            if (prodFilterValue !== 'All') {
+                filteredProducts = filteredProducts.filter(p => p.name === prodFilterValue);
+            }
+
+            if (filteredProducts.length === 0) {
+                 filteredProducts = [{ daily: globalDates.map(() => ({ sales: 0, units: 0, sessions: 0 })) }];
+            }
+
+            // 필터링된 제품들의 데일리 합산치 계산
+            const aggregatedDaily = globalDates.map((d, idx) => {
+                let s = 0, u = 0, sess = 0;
+                filteredProducts.forEach(p => {
+                    if(p.daily) {
+                        s += p.daily[idx].sales;
+                        u += p.daily[idx].units;
+                        sess += p.daily[idx].sessions;
+                    }
+                });
+                return { date: d, sales: s, units: u, sessions: sess };
+            });
+
+            // KPI 업데이트
+            const totalSales = aggregatedDaily.reduce((sum, d) => sum + d.sales, 0);
+            const totalUnits = aggregatedDaily.reduce((sum, d) => sum + d.units, 0);
+            const totalSessions = aggregatedDaily.reduce((sum, d) => sum + d.sessions, 0);
+
+            document.getElementById('kpiRevenue').innerText = formatEur(totalSales);
+            document.getElementById('kpiVolume').innerText = formatNum(totalUnits) + ' 개';
+            document.getElementById('kpiTraffic').innerText = formatNum(totalSessions) + ' 명';
+
+            // Chart 1 (Sales & Units) 업데이트
+            if (salesVolumeChartInstance) salesVolumeChartInstance.destroy();
+            const ctx1 = document.getElementById('salesVolumeChart').getContext('2d');
+            salesVolumeChartInstance = new Chart(ctx1, {
+                type: 'line',
+                data: {
+                    labels: globalDates,
+                    datasets: [
+                        {
+                            label: 'Sales (€)',
+                            data: aggregatedDaily.map(d => d.sales),
+                            borderColor: '#3b82f6',
+                            backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                            borderWidth: 2,
+                            tension: 0.4,
+                            yAxisID: 'y',
+                            fill: true,
+                            order: 1
+                        },
+                        {
+                            label: 'Units Sold',
+                            data: aggregatedDaily.map(d => d.units),
+                            type: 'bar',
+                            backgroundColor: '#a855f7',
+                            borderRadius: 4,
+                            yAxisID: 'y1',
+                            order: 2,
+                            barThickness: 'flex',
+                            maxBarThickness: 16
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: { mode: 'index', intersect: false },
+                    scales: {
+                        x: { grid: { display: false } },
+                        y: {
+                            type: 'linear', display: true, position: 'left',
+                            title: { display: true, text: 'Sales (€)' },
+                            ticks: { callback: (val) => '€' + (val >= 1000 ? (val/1000).toFixed(1) + 'k' : val) }
+                        },
+                        y1: {
+                            type: 'linear', display: true, position: 'right',
+                            title: { display: true, text: 'Units Sold' },
+                            grid: { drawOnChartArea: false },
+                            min: 0
+                        }
+                    }
+                }
+            });
+
+            // Chart 2 (Sessions) 업데이트
+            if (trafficChartInstance) trafficChartInstance.destroy();
+            const ctx2 = document.getElementById('trafficChart').getContext('2d');
+            trafficChartInstance = new Chart(ctx2, {
+                type: 'line',
+                data: {
+                    labels: globalDates,
+                    datasets: [
+                        {
+                            label: 'Sessions',
+                            data: aggregatedDaily.map(d => d.sessions),
+                            borderColor: '#10b981',
+                            backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                            borderWidth: 2,
+                            tension: 0.4,
+                            pointBackgroundColor: '#10b981',
+                            fill: true
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: { mode: 'index', intersect: false },
+                    scales: {
+                        x: { grid: { display: false } },
+                        y: {
+                            type: 'linear', display: true, position: 'left',
+                            title: { display: true, text: 'Sessions (방문수)' },
+                            min: 0
+                        }
+                    }
+                }
+            });
+
+            // 하단 Table 업데이트
+            const tbody = document.getElementById('tableBody');
+            tbody.innerHTML = '';
+            
+            if(filteredProducts.length === 1 && !filteredProducts[0].asin) {
+                tbody.innerHTML = `<tr><td colspan="6" class="text-center py-8 text-gray-500">선택하신 조건에 해당하는 데이터가 없습니다.</td></tr>`;
+            } else {
+                filteredProducts.forEach(p => {
+                    const tr = document.createElement('tr');
+                    tr.className = 'hover:bg-gray-800/50 transition-colors';
+                    tr.innerHTML = `
+                        <td class="px-6 py-4 whitespace-nowrap text-gray-400 font-mono text-xs">${p.asin}</td>
+                        <td class="px-6 py-4 whitespace-nowrap">
+                            <span class="bg-gray-700/50 border border-gray-600 text-gray-300 px-2.5 py-1 rounded-md text-xs font-semibold">${p.category}</span>
+                        </td>
+                        <td class="px-6 py-4 font-medium text-white max-w-xs truncate">${p.name}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-right text-blue-400 font-semibold">${formatEur(p.sales)}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-right text-purple-400">${formatNum(p.units)}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-right text-emerald-400">${formatNum(p.sessions)}</td>
+                    `;
+                    tbody.appendChild(tr);
+                });
+            }
+        }
+
+        // 드롭다운 이벤트 리스너
+        document.getElementById('categoryFilter').addEventListener('change', updateDashboard);
+        document.getElementById('productFilter').addEventListener('change', updateDashboard);
+
+        // 페이지 진입 시 자동으로 구글 시트 데이터 패칭
+        window.onload = function() {
+            fetchGoogleSheetData();
+        };
+    </script>
+</body>
+</html>
