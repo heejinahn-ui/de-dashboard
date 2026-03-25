@@ -36,21 +36,17 @@
         ::-webkit-scrollbar-track { background: #1e293b; }
         ::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
         ::-webkit-scrollbar-thumb:hover { background: #64748b; }
-        
-        /* 로딩 스피너 애니메이션 */
         .spinner { border: 4px solid rgba(255, 255, 255, 0.1); border-left-color: #10b981; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
     </style>
 </head>
 <body class="min-h-screen p-4 md:p-8">
 
-    <!-- Loading Overlay -->
     <div id="loading" class="fixed inset-0 bg-darker/80 z-50 flex flex-col justify-center items-center backdrop-blur-sm hidden">
         <div class="spinner mb-4"></div>
         <p class="text-gray-300 font-medium tracking-wide">구글 시트에서 최신 데이터를 연동하고 있습니다...</p>
     </div>
 
-    <!-- Header -->
     <header class="flex flex-col md:flex-row justify-between items-center mb-8 gap-4 bg-card p-6 rounded-2xl border border-gray-700 shadow-lg">
         <div>
             <div class="flex items-center gap-3">
@@ -63,7 +59,6 @@
         
         <div class="flex items-center gap-3 bg-darker px-4 py-2 rounded-xl border border-gray-600 shadow-inner">
             <i class="ph ph-funnel text-gray-400"></i>
-            <!-- 독립형 교차 필터: Category & Product -->
             <select id="categoryFilter" class="bg-transparent border-none text-white text-sm font-medium focus:ring-0 outline-none cursor-pointer appearance-none">
                 <option value="All">전체 카테고리 (Category)</option>
             </select>
@@ -74,7 +69,6 @@
         </div>
         
         <div class="ml-4">
-            <!-- 수동 업로드 대신 구글 시트 동기화 버튼으로 변경 -->
             <button onclick="fetchGoogleSheetData()" class="flex items-center gap-2 bg-secondary hover:bg-emerald-600 text-white px-5 py-2.5 rounded-xl cursor-pointer transition-all duration-200 shadow-lg shadow-emerald-500/20 font-medium">
                 <i class="ph ph-arrows-clockwise text-xl"></i>
                 <span>최신 데이터 동기화</span>
@@ -82,7 +76,6 @@
         </div>
     </header>
 
-    <!-- KPI Cards -->
     <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
         <div class="bg-card rounded-2xl p-6 border border-gray-700 shadow-xl relative overflow-hidden group">
             <div class="absolute -right-6 -top-6 w-24 h-24 bg-blue-500/10 rounded-full blur-2xl group-hover:bg-blue-500/20 transition-all"></div>
@@ -124,14 +117,11 @@
         </div>
     </div>
 
-    <!-- Charts Section -->
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-        <!-- Chart 1: Sales (Line) & Units Sold (Bar) -->
         <div class="bg-card rounded-2xl p-6 border border-gray-700 shadow-xl">
             <div class="flex items-center justify-between mb-6">
                 <h3 class="text-lg font-semibold flex items-center gap-2">
-                    <i class="ph ph-chart-line-up text-blue-400"></i> 
-                    매출(Sales) & 판매량(Units Sold) 추이
+                    <i class="ph ph-chart-line-up text-blue-400"></i> 매출(Sales) & 판매량(Units Sold) 추이
                 </h3>
             </div>
             <div class="chart-container">
@@ -139,12 +129,10 @@
             </div>
         </div>
 
-        <!-- Chart 2: Sessions (Line) -->
         <div class="bg-card rounded-2xl p-6 border border-gray-700 shadow-xl">
             <div class="flex items-center justify-between mb-6">
                 <h3 class="text-lg font-semibold flex items-center gap-2">
-                    <i class="ph ph-cursor-click text-emerald-400"></i> 
-                    유입수(Sessions) 추이
+                    <i class="ph ph-cursor-click text-emerald-400"></i> 유입수(Sessions) 추이
                 </h3>
             </div>
             <div class="chart-container">
@@ -153,7 +141,6 @@
         </div>
     </div>
 
-    <!-- Data Table Section -->
     <div class="bg-card rounded-2xl border border-gray-700 shadow-xl overflow-hidden mb-12">
         <div class="p-6 border-b border-gray-700 bg-gray-800/30">
             <h3 class="text-lg font-semibold flex items-center gap-2">
@@ -165,8 +152,8 @@
                 <thead class="bg-darker/50 text-gray-400 uppercase text-xs tracking-wider">
                     <tr>
                         <th class="px-6 py-4 font-medium">ASIN</th>
-                        <th class="px-6 py-4 font-medium">Category (D열)</th>
-                        <th class="px-6 py-4 font-medium">Product (E열)</th>
+                        <th class="px-6 py-4 font-medium">Category</th>
+                        <th class="px-6 py-4 font-medium">Product</th>
                         <th class="px-6 py-4 font-medium text-right">Total Sales (€)</th>
                         <th class="px-6 py-4 font-medium text-right">Units Sold</th>
                         <th class="px-6 py-4 font-medium text-right">Sessions</th>
@@ -180,7 +167,6 @@
     </div>
 
     <script>
-        // Chart.js Global Settings
         Chart.defaults.color = '#94a3b8';
         Chart.defaults.borderColor = 'rgba(51, 65, 85, 0.5)';
         Chart.defaults.font.family = "'Pretendard', -apple-system, sans-serif";
@@ -193,88 +179,76 @@
         let salesVolumeChartInstance = null;
         let trafficChartInstance = null;
 
-        // 고객님이 제공하신 구글 시트 CSV 링크
         const GOOGLE_SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRfNx4DSlK4pk21magEzPZ318RI3FCxBUYZXQcQZKjTjVvT378Zss0u4rdmkw-u3gu9yS_FTu1hmwpH/pub?gid=171053148&single=true&output=csv";
 
-        // 구글 시트 데이터 자동 패칭 함수
+        // 이중 우회 로직이 탑재된 데이터 패치 함수
         async function fetchGoogleSheetData() {
             const loading = document.getElementById('loading');
             loading.classList.remove('hidden');
 
             try {
-                // 로컬 PC 환경(보안 정책, CORS) 오류를 방지하기 위해 우회 프록시(Proxy)를 거쳐서 가져옵니다.
-                const proxyUrl = "https://api.allorigins.win/raw?url=" + encodeURIComponent(GOOGLE_SHEET_CSV_URL);
-                const response = await fetch(proxyUrl);
-                
-                if (!response.ok) throw new Error('네트워크 응답에 문제가 있습니다.');
+                let response;
+                try {
+                    // 1차 시도: Vercel 도메인에서 직통 연결 시도
+                    response = await fetch(GOOGLE_SHEET_CSV_URL);
+                    if (!response.ok) throw new Error('직통 연결 실패');
+                } catch (err) {
+                    // 2차 시도: 보안 정책(CORS)에 막힐 경우, 안전한 프록시 서버를 통해 우회 접속
+                    console.log('직통 연결 실패, 프록시 서버 우회 시도 중...');
+                    const proxyUrl = "https://api.allorigins.win/raw?url=" + encodeURIComponent(GOOGLE_SHEET_CSV_URL);
+                    response = await fetch(proxyUrl);
+                    if (!response.ok) throw new Error('프록시 연결 실패');
+                }
                 
                 const arrayBuffer = await response.arrayBuffer();
                 const data = new Uint8Array(arrayBuffer);
                 const workbook = XLSX.read(data, {type: 'array', raw: false});
                 
-                // CSV는 무조건 단일 시트이므로 첫 번째 시트 사용
                 const targetSheetName = workbook.SheetNames[0];
                 const worksheet = workbook.Sheets[targetSheetName];
                 const jsonData = XLSX.utils.sheet_to_json(worksheet, {header: 1, raw: false, defval: null});
                 
                 parseAndInitDashboard(jsonData);
             } catch (error) {
-                console.error("데이터 패칭 에러 상세:", error);
-                alert("구글 시트 데이터를 불러오는 중 오류가 발생했습니다.\n\n1. 잠시 후 다시 시도해주세요. (프록시 서버 지연)\n2. 구글 시트에서 [파일] > [공유] > [웹에 게시]를 완전히 마쳤는지 확인해주세요.\n\n상세 에러: " + error.message);
+                console.error(error);
+                alert("데이터를 불러올 수 없습니다.\n구글 시트가 웹에 올바르게 게시되었는지 확인해주세요.");
             } finally {
                 loading.classList.add('hidden');
             }
         }
 
         function parseAndInitDashboard(rows) {
-            if (rows.length < 3) {
-                alert("데이터가 너무 적거나 포맷이 다릅니다. 원본 시트 형식을 확인해주세요.");
-                return;
-            }
+            if (rows.length < 3) return;
 
             const dateRow = rows[0];
-
             globalDates = [];
             const dateIndices = [];
-            const startCol = 5; // F열부터 (index 5)
-            const colStep = 6;  // 6개 열마다 반복
+            const startCol = 5; 
+            const colStep = 6;  
 
-            // [날짜 파싱 로직]
             for (let i = startCol; i < dateRow.length; i += colStep) {
                 let cellValue = dateRow[i];
-                
-                // 만약 병합 셀 오류로 첫 칸이 비어있다면 주변 탐색
                 if (!cellValue) {
                     for(let j=1; j<colStep; j++) {
                         if (dateRow[i+j]) { cellValue = dateRow[i+j]; break; }
                     }
                 }
-
                 if (cellValue && String(cellValue).trim() !== '') {
                     let dStr = String(cellValue).trim();
                     let formattedDate = dStr; 
-
                     let match = dStr.match(/(\d{4})-(\d{2})-(\d{2})/);
-                    if (match) {
-                        formattedDate = `${match[2]}/${match[3]}`;
-                    } else if (dStr.includes('/')) {
+                    if (match) formattedDate = `${match[2]}/${match[3]}`;
+                    else if (dStr.includes('/')) {
                         let parts = dStr.split('/');
                         if(parts.length >= 2) formattedDate = `${parts[0].padStart(2,'0')}/${parts[1].padStart(2,'0')}`;
                     }
-
                     globalDates.push(formattedDate);
                     dateIndices.push(i);
                 }
             }
 
-            if (globalDates.length === 0) {
-                alert("1행에서 날짜(Date) 데이터를 인식할 수 없습니다.");
-                return;
-            }
-
             globalParsedData = [];
 
-            // 제품별 데이터 집계 (3행부터 시작, rows[1]은 헤더)
             for (let r = 2; r < rows.length; r++) {
                 const row = rows[r];
                 const asin = row[0];
@@ -293,24 +267,16 @@
                 for (let i = 0; i < dateIndices.length; i++) {
                     const c = dateIndices[i];
                     
-                    // 강력한 숫자 변환 로직 (유로 기호 등 예외처리)
                     const parseNumber = (val) => {
                         if (val === null || val === undefined || val === '') return 0;
                         if (typeof val === 'number') return val;
-                        
                         let str = String(val).trim();
                         str = str.replace(/[^0-9.,-]/g, '');
                         if (!str) return 0;
-
                         let lastComma = str.lastIndexOf(',');
                         let lastDot = str.lastIndexOf('.');
-                        
-                        if (lastComma > lastDot) {
-                            str = str.replace(/\./g, '').replace(',', '.');
-                        } else {
-                            str = str.replace(/,/g, '');
-                        }
-
+                        if (lastComma > lastDot) str = str.replace(/\./g, '').replace(',', '.');
+                        else str = str.replace(/,/g, '');
                         return parseFloat(str) || 0;
                     };
 
@@ -319,7 +285,6 @@
                     const sessions = parseNumber(row[c+2]);
 
                     dailyDataList.push({ sales, units, sessions });
-
                     prodTotalSales += sales;
                     prodTotalUnits += units;
                     prodTotalSessions += sessions;
@@ -332,27 +297,22 @@
                 });
             }
 
-            // 전체 기간 매출 순 정렬
             globalParsedData.sort((a, b) => b.sales - a.sales);
 
-            // 1. 드롭다운 필터 고유값 추출
             const uniqueCats = [...new Set(globalParsedData.map(d => d.category))];
             const uniqueProds = [...new Set(globalParsedData.map(d => d.name))];
 
             const categorySelect = document.getElementById('categoryFilter');
             const productSelect = document.getElementById('productFilter');
             
-            // 기존 옵션 초기화
             categorySelect.innerHTML = '<option value="All">전체 카테고리 (Category)</option>';
             productSelect.innerHTML = '<option value="All">전체 라인업 (Product)</option>';
 
             uniqueCats.forEach(c => categorySelect.add(new Option(c, c)));
             uniqueProds.forEach(p => productSelect.add(new Option(p, p)));
 
-            // 상태 뱃지 업데이트
             const badge = document.getElementById('dataStatusBadge');
             badge.className = "bg-emerald-500/20 text-emerald-400 border border-emerald-500/50 px-2.5 py-1 rounded-md text-xs font-semibold";
-            
             const now = new Date();
             const timeString = `${now.getHours()}:${String(now.getMinutes()).padStart(2, '0')} 동기화됨`;
             badge.innerText = `🟢 실시간 연동 중 (${timeString})`;
@@ -360,28 +320,19 @@
             updateDashboard();
         }
 
-        // 선택된 드롭다운 값에 따라 대시보드 업데이트
         function updateDashboard() {
-            if (globalDates.length === 0) return; // 데이터가 아직 없는 경우 방어
+            if (globalDates.length === 0) return;
 
             const catFilterValue = document.getElementById('categoryFilter').value;
             const prodFilterValue = document.getElementById('productFilter').value;
 
             let filteredProducts = globalParsedData;
             
-            // 두 필터를 각각 독립적으로 평가 (AND 조건 교차 필터링)
-            if (catFilterValue !== 'All') {
-                filteredProducts = filteredProducts.filter(p => p.category === catFilterValue);
-            }
-            if (prodFilterValue !== 'All') {
-                filteredProducts = filteredProducts.filter(p => p.name === prodFilterValue);
-            }
+            if (catFilterValue !== 'All') filteredProducts = filteredProducts.filter(p => p.category === catFilterValue);
+            if (prodFilterValue !== 'All') filteredProducts = filteredProducts.filter(p => p.name === prodFilterValue);
 
-            if (filteredProducts.length === 0) {
-                 filteredProducts = [{ daily: globalDates.map(() => ({ sales: 0, units: 0, sessions: 0 })) }];
-            }
+            if (filteredProducts.length === 0) filteredProducts = [{ daily: globalDates.map(() => ({ sales: 0, units: 0, sessions: 0 })) }];
 
-            // 필터링된 제품들의 데일리 합산치 계산
             const aggregatedDaily = globalDates.map((d, idx) => {
                 let s = 0, u = 0, sess = 0;
                 filteredProducts.forEach(p => {
@@ -394,7 +345,6 @@
                 return { date: d, sales: s, units: u, sessions: sess };
             });
 
-            // KPI 업데이트
             const totalSales = aggregatedDaily.reduce((sum, d) => sum + d.sales, 0);
             const totalUnits = aggregatedDaily.reduce((sum, d) => sum + d.units, 0);
             const totalSessions = aggregatedDaily.reduce((sum, d) => sum + d.sessions, 0);
@@ -403,7 +353,6 @@
             document.getElementById('kpiVolume').innerText = formatNum(totalUnits) + ' 개';
             document.getElementById('kpiTraffic').innerText = formatNum(totalSessions) + ' 명';
 
-            // Chart 1 (Sales & Units) 업데이트
             if (salesVolumeChartInstance) salesVolumeChartInstance.destroy();
             const ctx1 = document.getElementById('salesVolumeChart').getContext('2d');
             salesVolumeChartInstance = new Chart(ctx1, {
@@ -456,7 +405,6 @@
                 }
             });
 
-            // Chart 2 (Sessions) 업데이트
             if (trafficChartInstance) trafficChartInstance.destroy();
             const ctx2 = document.getElementById('trafficChart').getContext('2d');
             trafficChartInstance = new Chart(ctx2, {
@@ -491,7 +439,6 @@
                 }
             });
 
-            // 하단 Table 업데이트
             const tbody = document.getElementById('tableBody');
             tbody.innerHTML = '';
             
@@ -516,11 +463,9 @@
             }
         }
 
-        // 드롭다운 이벤트 리스너
         document.getElementById('categoryFilter').addEventListener('change', updateDashboard);
         document.getElementById('productFilter').addEventListener('change', updateDashboard);
 
-        // 페이지 진입 시 자동으로 구글 시트 데이터 패칭
         window.onload = function() {
             fetchGoogleSheetData();
         };
