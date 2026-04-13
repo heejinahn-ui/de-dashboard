@@ -44,20 +44,26 @@
 
     <div id="loading" class="fixed inset-0 bg-darker/80 z-50 flex flex-col justify-center items-center backdrop-blur-sm hidden">
         <div class="spinner mb-4"></div>
-        <p class="text-gray-300 font-medium tracking-wide">구글 시트에서 최신 데이터를 연동하고 있습니다...</p>
+        <p class="text-gray-300 font-medium tracking-wide">모든 월(Month)의 최신 데이터를 병합하고 있습니다...</p>
     </div>
 
-    <header class="flex flex-col md:flex-row justify-between items-center mb-8 gap-4 bg-card p-6 rounded-2xl border border-gray-700 shadow-lg">
+    <header class="flex flex-col xl:flex-row justify-between items-center mb-8 gap-4 bg-card p-6 rounded-2xl border border-gray-700 shadow-lg">
         <div>
             <div class="flex items-center gap-3">
                 <i class="ph-fill ph-amazon-logo text-white bg-[#FF9900] p-1.5 rounded-lg text-2xl"></i>
                 <h1 class="text-3xl font-bold">Amazon DE 성과 대시보드</h1>
                 <span id="dataStatusBadge" class="bg-gray-500/20 text-gray-400 border border-gray-500/50 px-2.5 py-1 rounded-md text-xs font-semibold">동기화 대기중</span>
             </div>
-            <p class="text-gray-400 mt-2 text-sm">Google Sheets 실시간 연동 (일별 Sales, Units Sold, Sessions)</p>
+            <p class="text-gray-400 mt-2 text-sm">Google Sheets 실시간 연동 (다중 시트 자동 병합)</p>
         </div>
         
-        <div class="flex items-center gap-3 bg-darker px-4 py-2 rounded-xl border border-gray-600 shadow-inner">
+        <div class="flex flex-wrap items-center gap-3 bg-darker px-4 py-2 rounded-xl border border-gray-600 shadow-inner">
+            <i class="ph ph-calendar-blank text-gray-400"></i>
+            <!-- 월(Month) 필터 추가 -->
+            <select id="monthFilter" class="bg-transparent border-none text-white text-sm font-medium focus:ring-0 outline-none cursor-pointer appearance-none">
+                <option value="All">전체 기간 (Month)</option>
+            </select>
+            <span class="text-gray-600 px-1">|</span>
             <i class="ph ph-funnel text-gray-400"></i>
             <select id="categoryFilter" class="bg-transparent border-none text-white text-sm font-medium focus:ring-0 outline-none cursor-pointer appearance-none">
                 <option value="All">전체 카테고리 (Category)</option>
@@ -71,7 +77,7 @@
         <div class="ml-4">
             <button onclick="fetchGoogleSheetData()" class="flex items-center gap-2 bg-secondary hover:bg-emerald-600 text-white px-5 py-2.5 rounded-xl cursor-pointer transition-all duration-200 shadow-lg shadow-emerald-500/20 font-medium">
                 <i class="ph ph-arrows-clockwise text-xl"></i>
-                <span>최신 데이터 동기화</span>
+                <span>전체 데이터 동기화</span>
             </button>
         </div>
     </header>
@@ -144,7 +150,7 @@
     <div class="bg-card rounded-2xl border border-gray-700 shadow-xl overflow-hidden mb-12">
         <div class="p-6 border-b border-gray-700 bg-gray-800/30">
             <h3 class="text-lg font-semibold flex items-center gap-2">
-                <i class="ph ph-table text-gray-400"></i> 조건별 상세 성과
+                <i class="ph ph-table text-gray-400"></i> 필터 조건별 상세 성과 합계
             </h3>
         </div>
         <div class="overflow-x-auto">
@@ -175,13 +181,13 @@
         const formatNum = (num) => new Intl.NumberFormat('en-US').format(num);
 
         let globalDates = [];
-        let globalParsedData = [];
+        let globalParsedData = []; // [ { asin, category, name, daily: { '03/01': {sales, units, sessions}, ... } } ]
         let salesVolumeChartInstance = null;
         let trafficChartInstance = null;
 
-        const GOOGLE_SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRfNx4DSlK4pk21magEzPZ318RI3FCxBUYZXQcQZKjTjVvT378Zss0u4rdmkw-u3gu9yS_FTu1hmwpH/pub?gid=171053148&single=true&output=csv";
+        // "전체 문서"를 xlsx 포맷으로 불러오도록 변경된 URL (단일 시트 csv가 아님)
+        const GOOGLE_SHEET_XLSX_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRfNx4DSlK4pk21magEzPZ318RI3FCxBUYZXQcQZKjTjVvT378Zss0u4rdmkw-u3gu9yS_FTu1hmwpH/pub?output=xlsx";
 
-        // 이중 우회 로직이 탑재된 데이터 패치 함수
         async function fetchGoogleSheetData() {
             const loading = document.getElementById('loading');
             loading.classList.remove('hidden');
@@ -189,13 +195,13 @@
             try {
                 let response;
                 try {
-                    // 1차 시도: Vercel 도메인에서 직통 연결 시도
-                    response = await fetch(GOOGLE_SHEET_CSV_URL);
+                    // 직통 연결 (XLSX 다운로드)
+                    response = await fetch(GOOGLE_SHEET_XLSX_URL);
                     if (!response.ok) throw new Error('직통 연결 실패');
                 } catch (err) {
-                    // 2차 시도: 보안 정책(CORS)에 막힐 경우, 안전한 프록시 서버를 통해 우회 접속
+                    // CORS 등 실패 시 프록시 우회
                     console.log('직통 연결 실패, 프록시 서버 우회 시도 중...');
-                    const proxyUrl = "https://api.allorigins.win/raw?url=" + encodeURIComponent(GOOGLE_SHEET_CSV_URL);
+                    const proxyUrl = "https://api.allorigins.win/raw?url=" + encodeURIComponent(GOOGLE_SHEET_XLSX_URL);
                     response = await fetch(proxyUrl);
                     if (!response.ok) throw new Error('프록시 연결 실패');
                 }
@@ -204,110 +210,132 @@
                 const data = new Uint8Array(arrayBuffer);
                 const workbook = XLSX.read(data, {type: 'array', raw: false});
                 
-                const targetSheetName = workbook.SheetNames[0];
-                const worksheet = workbook.Sheets[targetSheetName];
-                const jsonData = XLSX.utils.sheet_to_json(worksheet, {header: 1, raw: false, defval: null});
+                // "Sales by product" 라는 이름이 포함된 모든 시트(1월, 2월, 3월, 4월 등)를 찾음
+                const targetSheets = workbook.SheetNames.filter(name => name.toLowerCase().includes("sales by product"));
                 
-                parseAndInitDashboard(jsonData);
+                if (targetSheets.length === 0) {
+                    alert("데이터를 찾을 수 없습니다.\n구글 시트에 'Sales by product' 이름이 포함된 시트가 있는지 확인해주세요.");
+                    return;
+                }
+
+                parseAndInitDashboard(workbook, targetSheets);
             } catch (error) {
                 console.error(error);
-                alert("데이터를 불러올 수 없습니다.\n구글 시트가 웹에 올바르게 게시되었는지 확인해주세요.");
+                alert("데이터를 불러올 수 없습니다.\n1. 구글 시트 웹에 게시 설정이 '전체 문서', 'Excel'로 되어있는지 확인해주세요.\n2. 사내 보안(Workspace) 문제일 수 있습니다.");
             } finally {
                 loading.classList.add('hidden');
             }
         }
 
-        function parseAndInitDashboard(rows) {
-            if (rows.length < 3) return;
+        // 다중 시트 데이터를 하나로 병합하는 강력한 파싱 로직
+        function parseAndInitDashboard(workbook, targetSheets) {
+            let dateSet = new Set();
+            let productMap = new Map(); // ASIN을 고유 키로 사용하여 모든 달의 데이터를 통합
 
-            const dateRow = rows[0];
-            globalDates = [];
-            const dateIndices = [];
-            const startCol = 5; 
-            const colStep = 6;  
+            targetSheets.forEach(sheetName => {
+                const worksheet = workbook.Sheets[sheetName];
+                const rows = XLSX.utils.sheet_to_json(worksheet, {header: 1, raw: false, defval: null});
+                if (rows.length < 3) return; // 데이터가 없는 빈 시트 스킵
 
-            for (let i = startCol; i < dateRow.length; i += colStep) {
-                let cellValue = dateRow[i];
-                if (!cellValue) {
-                    for(let j=1; j<colStep; j++) {
-                        if (dateRow[i+j]) { cellValue = dateRow[i+j]; break; }
+                const dateRow = rows[0];
+                const dateIndices = [];
+                const startCol = 5; 
+                const colStep = 6;  
+
+                // 날짜 추출 로직
+                for (let i = startCol; i < dateRow.length; i += colStep) {
+                    let cellValue = dateRow[i];
+                    if (!cellValue) {
+                        for(let j=1; j<colStep; j++) {
+                            if (dateRow[i+j]) { cellValue = dateRow[i+j]; break; }
+                        }
+                    }
+                    if (cellValue && String(cellValue).trim() !== '') {
+                        let dStr = String(cellValue).trim();
+                        let formattedDate = dStr; 
+                        let match = dStr.match(/(\d{4})-(\d{2})-(\d{2})/);
+                        if (match) formattedDate = `${match[2]}/${match[3]}`; // MM/DD 형식
+                        else if (dStr.includes('/')) {
+                            let parts = dStr.split('/');
+                            if(parts.length >= 2) formattedDate = `${parts[0].padStart(2,'0')}/${parts[1].padStart(2,'0')}`;
+                        }
+                        dateSet.add(formattedDate);
+                        dateIndices.push({ index: i, date: formattedDate });
                     }
                 }
-                if (cellValue && String(cellValue).trim() !== '') {
-                    let dStr = String(cellValue).trim();
-                    let formattedDate = dStr; 
-                    let match = dStr.match(/(\d{4})-(\d{2})-(\d{2})/);
-                    if (match) formattedDate = `${match[2]}/${match[3]}`;
-                    else if (dStr.includes('/')) {
-                        let parts = dStr.split('/');
-                        if(parts.length >= 2) formattedDate = `${parts[0].padStart(2,'0')}/${parts[1].padStart(2,'0')}`;
-                    }
-                    globalDates.push(formattedDate);
-                    dateIndices.push(i);
-                }
-            }
 
-            globalParsedData = [];
-
-            for (let r = 2; r < rows.length; r++) {
-                const row = rows[r];
-                const asin = row[0];
-                
-                if (!asin || String(asin).trim() === '' || String(asin).trim().toUpperCase() === 'ASIN') continue;
-
-                const sku = row[1] || '-';
-                const category = row[3] || 'Uncategorized';
-                const productName = row[4] || 'Unknown';
-                
-                let prodTotalSales = 0;
-                let prodTotalUnits = 0;
-                let prodTotalSessions = 0;
-                const dailyDataList = [];
-
-                for (let i = 0; i < dateIndices.length; i++) {
-                    const c = dateIndices[i];
+                // 제품 데이터 추출 및 병합 로직
+                for (let r = 2; r < rows.length; r++) {
+                    const row = rows[r];
+                    const asin = row[0];
                     
-                    const parseNumber = (val) => {
-                        if (val === null || val === undefined || val === '') return 0;
-                        if (typeof val === 'number') return val;
-                        let str = String(val).trim();
-                        str = str.replace(/[^0-9.,-]/g, '');
-                        if (!str) return 0;
-                        let lastComma = str.lastIndexOf(',');
-                        let lastDot = str.lastIndexOf('.');
-                        if (lastComma > lastDot) str = str.replace(/\./g, '').replace(',', '.');
-                        else str = str.replace(/,/g, '');
-                        return parseFloat(str) || 0;
-                    };
+                    if (!asin || String(asin).trim() === '' || String(asin).trim().toUpperCase() === 'ASIN') continue;
 
-                    const sales = parseNumber(row[c]);
-                    const units = parseNumber(row[c+1]);
-                    const sessions = parseNumber(row[c+2]);
+                    if (!productMap.has(asin)) {
+                        productMap.set(asin, {
+                            asin: asin,
+                            sku: row[1] || '-',
+                            category: row[3] || 'Uncategorized',
+                            name: row[4] || 'Unknown',
+                            daily: {} // 날짜별 데이터를 담을 객체
+                        });
+                    }
 
-                    dailyDataList.push({ sales, units, sessions });
-                    prodTotalSales += sales;
-                    prodTotalUnits += units;
-                    prodTotalSessions += sessions;
+                    let pData = productMap.get(asin);
+
+                    for (let i = 0; i < dateIndices.length; i++) {
+                        const c = dateIndices[i].index;
+                        const d = dateIndices[i].date;
+                        
+                        const parseNumber = (val) => {
+                            if (val === null || val === undefined || val === '') return 0;
+                            if (typeof val === 'number') return val;
+                            let str = String(val).trim();
+                            str = str.replace(/[^0-9.,-]/g, '');
+                            if (!str) return 0;
+                            let lastComma = str.lastIndexOf(',');
+                            let lastDot = str.lastIndexOf('.');
+                            if (lastComma > lastDot) str = str.replace(/\./g, '').replace(',', '.');
+                            else str = str.replace(/,/g, '');
+                            return parseFloat(str) || 0;
+                        };
+
+                        const sales = parseNumber(row[c]);
+                        const units = parseNumber(row[c+1]);
+                        const sessions = parseNumber(row[c+2]);
+
+                        if (!pData.daily[d]) pData.daily[d] = { sales:0, units:0, sessions:0 };
+                        
+                        pData.daily[d].sales += sales;
+                        pData.daily[d].units += units;
+                        pData.daily[d].sessions += sessions;
+                    }
                 }
+            });
 
-                globalParsedData.push({
-                    asin, sku, category, name: productName,
-                    sales: prodTotalSales, units: prodTotalUnits, sessions: prodTotalSessions,
-                    daily: dailyDataList
-                });
+            globalDates = Array.from(dateSet).sort(); // 모든 달의 날짜를 모아서 시간순 정렬
+            
+            if (globalDates.length === 0) {
+                alert("날짜(Date) 데이터를 인식할 수 없습니다.");
+                return;
             }
 
-            globalParsedData.sort((a, b) => b.sales - a.sales);
+            globalParsedData = Array.from(productMap.values());
 
+            // 드롭다운 필터 초기화 (월, 카테고리, 제품)
+            const uniqueMonths = [...new Set(globalDates.map(d => d.split('/')[0]))].sort();
             const uniqueCats = [...new Set(globalParsedData.map(d => d.category))];
             const uniqueProds = [...new Set(globalParsedData.map(d => d.name))];
 
+            const monthSelect = document.getElementById('monthFilter');
             const categorySelect = document.getElementById('categoryFilter');
             const productSelect = document.getElementById('productFilter');
             
+            monthSelect.innerHTML = '<option value="All">전체 기간 (Month)</option>';
             categorySelect.innerHTML = '<option value="All">전체 카테고리 (Category)</option>';
             productSelect.innerHTML = '<option value="All">전체 라인업 (Product)</option>';
 
+            uniqueMonths.forEach(m => monthSelect.add(new Option(`${parseInt(m, 10)}월`, m)));
             uniqueCats.forEach(c => categorySelect.add(new Option(c, c)));
             uniqueProds.forEach(p => productSelect.add(new Option(p, p)));
 
@@ -315,36 +343,48 @@
             badge.className = "bg-emerald-500/20 text-emerald-400 border border-emerald-500/50 px-2.5 py-1 rounded-md text-xs font-semibold";
             const now = new Date();
             const timeString = `${now.getHours()}:${String(now.getMinutes()).padStart(2, '0')} 동기화됨`;
-            badge.innerText = `🟢 실시간 연동 중 (${timeString})`;
+            badge.innerText = `🟢 다중 시트 연동 완료 (${timeString})`;
 
             updateDashboard();
         }
 
+        // 선택된 모든 조건(월, 카테고리, 제품)에 맞춰 화면 갱신
         function updateDashboard() {
             if (globalDates.length === 0) return;
 
+            const monthFilterValue = document.getElementById('monthFilter').value;
             const catFilterValue = document.getElementById('categoryFilter').value;
             const prodFilterValue = document.getElementById('productFilter').value;
 
+            // 1. 날짜 필터링 (선택된 월만 활성화)
+            let activeDates = globalDates;
+            if (monthFilterValue !== 'All') {
+                activeDates = globalDates.filter(d => d.split('/')[0] === monthFilterValue);
+            }
+
+            // 2. 카테고리/제품 필터링
             let filteredProducts = globalParsedData;
-            
             if (catFilterValue !== 'All') filteredProducts = filteredProducts.filter(p => p.category === catFilterValue);
             if (prodFilterValue !== 'All') filteredProducts = filteredProducts.filter(p => p.name === prodFilterValue);
 
-            if (filteredProducts.length === 0) filteredProducts = [{ daily: globalDates.map(() => ({ sales: 0, units: 0, sessions: 0 })) }];
+            if (filteredProducts.length === 0) {
+                 filteredProducts = [{ daily: {} }];
+            }
 
-            const aggregatedDaily = globalDates.map((d, idx) => {
+            // 3. 필터링된 날짜와 제품을 바탕으로 일별 데이터 합산
+            const aggregatedDaily = activeDates.map(d => {
                 let s = 0, u = 0, sess = 0;
                 filteredProducts.forEach(p => {
-                    if(p.daily) {
-                        s += p.daily[idx].sales;
-                        u += p.daily[idx].units;
-                        sess += p.daily[idx].sessions;
+                    if(p.daily && p.daily[d]) {
+                        s += p.daily[d].sales;
+                        u += p.daily[d].units;
+                        sess += p.daily[d].sessions;
                     }
                 });
                 return { date: d, sales: s, units: u, sessions: sess };
             });
 
+            // 4. 상단 KPI 업데이트
             const totalSales = aggregatedDaily.reduce((sum, d) => sum + d.sales, 0);
             const totalUnits = aggregatedDaily.reduce((sum, d) => sum + d.units, 0);
             const totalSessions = aggregatedDaily.reduce((sum, d) => sum + d.sessions, 0);
@@ -353,12 +393,13 @@
             document.getElementById('kpiVolume').innerText = formatNum(totalUnits) + ' 개';
             document.getElementById('kpiTraffic').innerText = formatNum(totalSessions) + ' 명';
 
+            // 5. 차트 업데이트
             if (salesVolumeChartInstance) salesVolumeChartInstance.destroy();
             const ctx1 = document.getElementById('salesVolumeChart').getContext('2d');
             salesVolumeChartInstance = new Chart(ctx1, {
                 type: 'line',
                 data: {
-                    labels: globalDates,
+                    labels: activeDates,
                     datasets: [
                         {
                             label: 'Sales (€)',
@@ -410,7 +451,7 @@
             trafficChartInstance = new Chart(ctx2, {
                 type: 'line',
                 data: {
-                    labels: globalDates,
+                    labels: activeDates,
                     datasets: [
                         {
                             label: 'Sessions',
@@ -439,13 +480,31 @@
                 }
             });
 
+            // 6. 하단 Table 업데이트 (현재 선택된 월/날짜 구간에 해당하는 합계만 계산)
             const tbody = document.getElementById('tableBody');
             tbody.innerHTML = '';
             
             if(filteredProducts.length === 1 && !filteredProducts[0].asin) {
                 tbody.innerHTML = `<tr><td colspan="6" class="text-center py-8 text-gray-500">선택하신 조건에 해당하는 데이터가 없습니다.</td></tr>`;
             } else {
-                filteredProducts.forEach(p => {
+                // 현재 기간 합계를 구해서 내림차순 정렬
+                const tableData = filteredProducts.filter(p => p.asin).map(p => {
+                    let s = 0, u = 0, sess = 0;
+                    activeDates.forEach(d => {
+                        if (p.daily && p.daily[d]) {
+                            s += p.daily[d].sales;
+                            u += p.daily[d].units;
+                            sess += p.daily[d].sessions;
+                        }
+                    });
+                    return { ...p, periodSales: s, periodUnits: u, periodSessions: sess };
+                });
+                
+                tableData.sort((a, b) => b.periodSales - a.periodSales);
+
+                tableData.forEach(p => {
+                    if (p.periodSales === 0 && p.periodUnits === 0 && p.periodSessions === 0) return; // 선택한 월에 데이터가 아예 없는 제품은 숨김
+
                     const tr = document.createElement('tr');
                     tr.className = 'hover:bg-gray-800/50 transition-colors';
                     tr.innerHTML = `
@@ -454,15 +513,17 @@
                             <span class="bg-gray-700/50 border border-gray-600 text-gray-300 px-2.5 py-1 rounded-md text-xs font-semibold">${p.category}</span>
                         </td>
                         <td class="px-6 py-4 font-medium text-white max-w-xs truncate">${p.name}</td>
-                        <td class="px-6 py-4 whitespace-nowrap text-right text-blue-400 font-semibold">${formatEur(p.sales)}</td>
-                        <td class="px-6 py-4 whitespace-nowrap text-right text-purple-400">${formatNum(p.units)}</td>
-                        <td class="px-6 py-4 whitespace-nowrap text-right text-emerald-400">${formatNum(p.sessions)}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-right text-blue-400 font-semibold">${formatEur(p.periodSales)}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-right text-purple-400">${formatNum(p.periodUnits)}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-right text-emerald-400">${formatNum(p.periodSessions)}</td>
                     `;
                     tbody.appendChild(tr);
                 });
             }
         }
 
+        // 이벤트 리스너 추가
+        document.getElementById('monthFilter').addEventListener('change', updateDashboard);
         document.getElementById('categoryFilter').addEventListener('change', updateDashboard);
         document.getElementById('productFilter').addEventListener('change', updateDashboard);
 
