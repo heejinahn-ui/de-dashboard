@@ -198,25 +198,20 @@
         let salesVolumeChartInstance = null;
         let trafficChartInstance = null;
 
-        // 현재 선택된 필터 상태 관리
         let currentMonth = 'All';
         let currentCategory = 'All';
         let currentProduct = 'All';
 
-        // 필터 옵션 배열
         let availableMonths = [];
         let availableCats = [];
         let availableProds = [];
 
-        // 구글 시트 링크 (전체 엑셀 문서)
         const GOOGLE_SHEET_XLSX_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRfNx4DSlK4pk21magEzPZ318RI3FCxBUYZXQcQZKjTjVvT378Zss0u4rdmkw-u3gu9yS_FTu1hmwpH/pub?output=xlsx";
 
-        // 버튼(Chip) 형태의 필터를 렌더링하는 헬퍼 함수
         function renderFilterButtons(containerId, options, currentValue, allLabel, callback) {
             const container = document.getElementById(containerId);
             container.innerHTML = '';
             
-            // "전체(All)" 버튼 생성
             const allBtn = document.createElement('button');
             allBtn.innerText = allLabel;
             allBtn.className = currentValue === 'All' 
@@ -225,15 +220,10 @@
             allBtn.onclick = () => callback('All');
             container.appendChild(allBtn);
 
-            // 각 옵션 버튼 생성
             options.forEach(opt => {
                 const btn = document.createElement('button');
-                
-                // 월(Month)의 경우 숫자 뒤에 '월'을 붙여서 표시
                 let labelText = opt;
-                if (containerId === 'monthFilterContainer') {
-                    labelText = parseInt(opt, 10) + '월';
-                }
+                if (containerId === 'monthFilterContainer') labelText = parseInt(opt, 10) + '월';
 
                 btn.innerText = labelText;
                 btn.className = currentValue === opt 
@@ -244,12 +234,11 @@
             });
         }
 
-        // 전체 필터 영역을 다시 그리는 함수
         function renderAllFilters() {
             renderFilterButtons('monthFilterContainer', availableMonths, currentMonth, '전체 기간', (val) => {
                 currentMonth = val;
                 updateDashboard();
-                renderAllFilters(); // 클릭 효과 업데이트
+                renderAllFilters();
             });
             renderFilterButtons('categoryFilterContainer', availableCats, currentCategory, '전체 카테고리', (val) => {
                 currentCategory = val;
@@ -270,11 +259,9 @@
             try {
                 let response;
                 try {
-                    // 직통 연결 (XLSX 다운로드)
                     response = await fetch(GOOGLE_SHEET_XLSX_URL);
                     if (!response.ok) throw new Error('직통 연결 실패');
                 } catch (err) {
-                    // CORS 등 실패 시 프록시 우회
                     console.log('직통 연결 실패, 프록시 서버 우회 시도 중...');
                     const proxyUrl = "https://api.allorigins.win/raw?url=" + encodeURIComponent(GOOGLE_SHEET_XLSX_URL);
                     response = await fetch(proxyUrl);
@@ -285,7 +272,6 @@
                 const data = new Uint8Array(arrayBuffer);
                 const workbook = XLSX.read(data, {type: 'array', raw: false});
                 
-                // "Sales by product" 라는 이름이 포함된 모든 시트를 찾음
                 const targetSheets = workbook.SheetNames.filter(name => name.toLowerCase().includes("sales by product"));
                 
                 if (targetSheets.length === 0) {
@@ -302,7 +288,7 @@
             }
         }
 
-        // 다중 시트 데이터를 하나로 병합하는 강력한 파싱 로직
+        // 지능형 다중 시트 파싱 로직 (열 밀림 방지 & 수기 데이터 보호)
         function parseAndInitDashboard(workbook, targetSheets) {
             let dateSet = new Set();
             let productMap = new Map();
@@ -313,25 +299,20 @@
                 if (rows.length < 3) return;
 
                 const dateRow = rows[0];
+                const metricRow = rows[1]; // Sub-header (Sales, Units Sold, Sessions 등)
                 
-                // ★ 개선포인트 1: 가장 긴 열의 길이를 기준으로 스캔하여, 날짜 헤더가 누락되어도 데이터가 있는 곳까지 강제 탐색
-                let maxCols = 0;
-                for (let r = 0; r < rows.length; r++) {
-                    if (rows[r].length > maxCols) maxCols = rows[r].length;
-                }
+                let maxCols = Math.max(dateRow.length, metricRow ? metricRow.length : 0);
                 
-                const dateIndices = [];
-                const startCol = 5; 
-                const colStep = 6;  
                 let lastParsedDate = null;
+                const sheetDateMap = new Map(); // 각 날짜별로 정확히 몇 번째 열에 데이터가 있는지 매핑
 
-                // 날짜 추출
-                for (let i = startCol; i < maxCols; i += colStep) {
+                // 1. 날짜 헤더와 세부 지표(Metric) 헤더 스캔
+                for (let i = 5; i < maxCols; i++) {
                     let cellValue = dateRow[i];
                     
-                    // 병합셀 등 대비
+                    // 빈 칸이면 근처에서 병합된 날짜 텍스트 찾기
                     if (!cellValue && i < dateRow.length) {
-                        for(let j=1; j<colStep; j++) {
+                        for(let j=1; j<6; j++) {
                             if (dateRow[i+j]) { cellValue = dateRow[i+j]; break; }
                         }
                     }
@@ -343,29 +324,31 @@
                         if (match) {
                             formattedDate = `${match[2]}/${match[3]}`;
                         } else {
-                            // 다양한 형태의 날짜(4.27, 4/27 등) 강제 변환
                             let m = dStr.match(/(?:^|\D)(\d{1,2})[-\/\.](\d{1,2})(?:\D|$)/);
                             if (m) formattedDate = `${m[1].padStart(2,'0')}/${m[2].padStart(2,'0')}`;
                         }
                     }
 
-                    // ★ 개선포인트 2: 헤더가 비어있어도 이전 날짜를 기억했다가 +1일씩 자동으로 유추해서 날짜 부여
-                    if (!formattedDate && lastParsedDate) {
-                        let [m, d] = lastParsedDate.split('/').map(Number);
-                        let tempDate = new Date(2026, m - 1, d + 1);
-                        let newM = String(tempDate.getMonth() + 1).padStart(2, '0');
-                        let newD = String(tempDate.getDate()).padStart(2, '0');
-                        formattedDate = `${newM}/${newD}`;
+                    if (formattedDate) {
+                        lastParsedDate = formattedDate;
+                        dateSet.add(formattedDate);
+                        if (!sheetDateMap.has(formattedDate)) {
+                            sheetDateMap.set(formattedDate, { sales: -1, units: -1, sessions: -1 });
+                        }
                     }
 
-                    if (formattedDate) {
-                        dateSet.add(formattedDate);
-                        dateIndices.push({ index: i, date: formattedDate });
-                        lastParsedDate = formattedDate; // 다음 루프 유추를 위해 갱신
+                    // 열(Column) 밀림 현상 완벽 방지: 6칸을 강제 스킵하지 않고 글자를 직접 찾아 매핑
+                    if (lastParsedDate && metricRow && metricRow[i]) {
+                        let metricStr = String(metricRow[i]).trim().toLowerCase();
+                        let dMap = sheetDateMap.get(lastParsedDate);
+                        
+                        if (metricStr.includes('sales')) dMap.sales = i;
+                        else if (metricStr.includes('units') || metricStr.includes('sold')) dMap.units = i;
+                        else if (metricStr.includes('sessions') || metricStr.includes('session')) dMap.sessions = i;
                     }
                 }
 
-                // 데이터 병합
+                // 2. 매핑된 정확한 인덱스로 데이터 추출
                 for (let r = 2; r < rows.length; r++) {
                     const row = rows[r];
                     const asin = row[0];
@@ -384,17 +367,18 @@
 
                     let pData = productMap.get(asin);
 
-                    for (let i = 0; i < dateIndices.length; i++) {
-                        const c = dateIndices[i].index;
-                        const d = dateIndices[i].date;
+                    for (let [d, indices] of sheetDateMap.entries()) {
+                        if (!pData.daily[d]) pData.daily[d] = { sales: null, units: null, sessions: null };
                         
-                        // ★ 개선포인트 3: 데이터가 아예 안 들어온 상태(공란)는 0이 아니라 null로 처리하여 그래프가 0으로 곤두박질치지 않게 함
-                        const parseNumber = (val) => {
+                        const parseNumber = (cIdx) => {
+                            if (cIdx === -1 || cIdx >= row.length) return null;
+                            let val = row[cIdx];
                             if (val === null || val === undefined || val === '') return null;
-                            if (typeof val === 'number') return val;
                             let str = String(val).trim();
+                            if (str.startsWith('#') || str === '-') return null; // 수식 에러 버그 방지
+                            if (typeof val === 'number') return val;
                             str = str.replace(/[^0-9.,-]/g, '');
-                            if (!str) return null;
+                            if (!str || str === '-') return null;
                             let lastComma = str.lastIndexOf(',');
                             let lastDot = str.lastIndexOf('.');
                             if (lastComma > lastDot) str = str.replace(/\./g, '').replace(',', '.');
@@ -402,15 +386,14 @@
                             return parseFloat(str);
                         };
 
-                        const sales = parseNumber(row[c]);
-                        const units = parseNumber(row[c+1]);
-                        const sessions = parseNumber(row[c+2]);
+                        const sales = parseNumber(indices.sales);
+                        const units = parseNumber(indices.units);
+                        const sessions = parseNumber(indices.sessions);
 
-                        if (!pData.daily[d]) pData.daily[d] = { sales: null, units: null, sessions: null };
-                        
-                        if (!isNaN(sales) && sales !== null) pData.daily[d].sales = (pData.daily[d].sales || 0) + sales;
-                        if (!isNaN(units) && units !== null) pData.daily[d].units = (pData.daily[d].units || 0) + units;
-                        if (!isNaN(sessions) && sessions !== null) pData.daily[d].sessions = (pData.daily[d].sessions || 0) + sessions;
+                        // 수기 데이터 보호 (무조건 0으로 덮어쓰거나 무시하지 않음)
+                        if (sales !== null && !isNaN(sales)) pData.daily[d].sales = (pData.daily[d].sales || 0) + sales;
+                        if (units !== null && !isNaN(units)) pData.daily[d].units = (pData.daily[d].units || 0) + units;
+                        if (sessions !== null && !isNaN(sessions)) pData.daily[d].sessions = (pData.daily[d].sessions || 0) + sessions;
                     }
                 }
             });
@@ -423,35 +406,29 @@
 
             globalParsedData = Array.from(productMap.values());
 
-            // 필터용 데이터 추출
             availableMonths = [...new Set(globalDates.map(d => d.split('/')[0]))].sort();
             availableCats = [...new Set(globalParsedData.map(d => d.category))];
             availableProds = [...new Set(globalParsedData.map(d => d.name))];
 
-            // 필터 UI 생성
             renderAllFilters();
 
-            // 뱃지 업데이트
             const badge = document.getElementById('dataStatusBadge');
             badge.className = "bg-emerald-500/20 text-emerald-400 border border-emerald-500/50 px-2.5 py-1 rounded-md text-xs font-semibold";
             const now = new Date();
             const timeString = `${now.getHours()}:${String(now.getMinutes()).padStart(2, '0')} 동기화됨`;
-            badge.innerText = `🟢 다중 시트 연동 완료 (${timeString})`;
+            badge.innerText = `🟢 데이터 동기화 성공 (${timeString})`;
 
             updateDashboard();
         }
 
-        // 선택된 모든 조건(월, 카테고리, 제품)에 맞춰 화면 갱신
         function updateDashboard() {
             if (globalDates.length === 0) return;
 
-            // 1. 날짜 필터링
             let activeDates = globalDates;
             if (currentMonth !== 'All') {
                 activeDates = globalDates.filter(d => d.split('/')[0] === currentMonth);
             }
 
-            // 2. 카테고리/제품 필터링
             let filteredProducts = globalParsedData;
             if (currentCategory !== 'All') filteredProducts = filteredProducts.filter(p => p.category === currentCategory);
             if (currentProduct !== 'All') filteredProducts = filteredProducts.filter(p => p.name === currentProduct);
@@ -460,7 +437,6 @@
                  filteredProducts = [{ daily: {} }];
             }
 
-            // 3. 일별 합산 (null 유지 연산)
             const aggregatedDaily = activeDates.map(d => {
                 let s = null, u = null, sess = null;
                 filteredProducts.forEach(p => {
@@ -470,10 +446,10 @@
                         if (p.daily[d].sessions !== null) sess = (sess || 0) + p.daily[d].sessions;
                     }
                 });
+                // 아마존 딜레이 때문에 삭제했던 로직 완전 제거 -> 고객 수기 입력값(0이든 숫자든) 완벽 보존
                 return { date: d, sales: s, units: u, sessions: sess };
             });
 
-            // 4. KPI 업데이트 (null은 0으로 취급하여 총합 계산)
             const totalSales = aggregatedDaily.reduce((sum, d) => sum + (d.sales || 0), 0);
             const totalUnits = aggregatedDaily.reduce((sum, d) => sum + (d.units || 0), 0);
             const totalSessions = aggregatedDaily.reduce((sum, d) => sum + (d.sessions || 0), 0);
@@ -482,7 +458,6 @@
             document.getElementById('kpiVolume').innerText = formatNum(totalUnits) + ' 개';
             document.getElementById('kpiTraffic').innerText = formatNum(totalSessions) + ' 명';
 
-            // 5. 차트 업데이트 (spanGaps: true 를 주어 데이터가 없는 날짜는 선을 끊지 않고 이어줌)
             if (salesVolumeChartInstance) salesVolumeChartInstance.destroy();
             const ctx1 = document.getElementById('salesVolumeChart').getContext('2d');
             salesVolumeChartInstance = new Chart(ctx1, {
@@ -497,7 +472,9 @@
                             backgroundColor: 'rgba(59, 130, 246, 0.1)',
                             borderWidth: 2,
                             tension: 0.4,
-                            spanGaps: true,
+                            spanGaps: true, // 빈칸은 무시하고 꺾은선을 부드럽게 이어줌
+                            pointRadius: 3,
+                            pointHoverRadius: 6,
                             yAxisID: 'y',
                             fill: true,
                             order: 1
@@ -552,6 +529,8 @@
                             tension: 0.4,
                             spanGaps: true,
                             pointBackgroundColor: '#10b981',
+                            pointRadius: 4,      // 끊겨있는 점도 눈에 잘 띄게 확대
+                            pointHoverRadius: 7, 
                             fill: true
                         }
                     ]
@@ -571,7 +550,6 @@
                 }
             });
 
-            // 6. 하단 Table 업데이트 
             const tbody = document.getElementById('tableBody');
             tbody.innerHTML = '';
             
@@ -613,7 +591,6 @@
         }
 
         window.onload = function() {
-            // 초기 빈 버튼 레이아웃 렌더링
             renderAllFilters();
             fetchGoogleSheetData();
         };
