@@ -289,30 +289,40 @@
             }
         }
 
-        // ★ v3.0 절대 추출 로직: 열 개수 6칸 간격 (고객님의 규칙)을 절대적으로 신뢰하는 원복 버전
+        // ★ 궁극의 이중 파싱 로직: 문자열/날짜는 포맷 그대로, 숫자는 소수점 오류 없이 원본(raw) 그대로 추출합니다.
         function parseAndInitDashboard(workbook, targetSheets) {
             let dateSet = new Set();
             let productMap = new Map();
 
             targetSheets.forEach(sheetName => {
                 const worksheet = workbook.Sheets[sheetName];
-                const rows = XLSX.utils.sheet_to_json(worksheet, {header: 1, raw: false, defval: ''});
-                if (rows.length < 3) return;
-
-                const dateRow = rows[0];
+                // 1. 헤더 및 날짜 파싱용 (raw: false)
+                const rowsFmt = XLSX.utils.sheet_to_json(worksheet, {header: 1, raw: false, defval: ''});
+                // 2. 순수 숫자 파싱용 (raw: true) -> 1,000 이 1.0 으로 바뀌는 포맷 오류를 원천 차단
+                const rowsRaw = XLSX.utils.sheet_to_json(worksheet, {header: 1, raw: true, defval: ''});
                 
-                // 각 행의 최대 길이를 스캔하여 끝까지 추적 (4/27 이후 FF열 ~ GC열 등)
+                if (rowsFmt.length < 3) return;
+
+                const dateRow = rowsFmt[0];
+                const metricRow = rowsFmt[1]; // 2행 (지표 헤더: Sales, Units Sold, Sessions 등)
+                
                 let maxCols = 0;
-                for (let r = 0; r < rows.length; r++) {
-                    if (rows[r].length > maxCols) maxCols = rows[r].length;
+                for (let r = 0; r < rowsFmt.length; r++) {
+                    if (rowsFmt[r].length > maxCols) maxCols = rowsFmt[r].length;
                 }
                 
-                const dateIndices = [];
                 const startCol = 5; // F열 = 5 (0-index 기준)
                 const colStep = 6;  // 6칸 간격 룰
                 let lastParsedDate = null;
+                
+                // 만약 헤더가 지워졌을 때를 대비해 이전 성공 오프셋을 기억해둡니다
+                let lastOffsetSales = 0;
+                let lastOffsetUnits = 1;
+                let lastOffsetSessions = 2; 
 
-                // 1. 6칸 간격으로 날짜를 추적합니다.
+                const sheetDateMap = new Map();
+
+                // 1. 6칸 간격으로 날짜를 추적하며, 그 6칸 안에서 진짜 헤더 위치를 눈으로 찾습니다.
                 for (let i = startCol; i < maxCols; i += colStep) {
                     let cellValue = dateRow[i];
                     
@@ -334,7 +344,6 @@
                         }
                     }
 
-                    // 날짜 칸이 아예 없어도 무조건 하루씩 추가해 4/27, 4/28, 4/29 등을 강제 생성합니다!
                     if (!formattedDate && lastParsedDate) {
                         let [m, d] = lastParsedDate.split('/').map(Number);
                         let tempDate = new Date(2026, m - 1, d + 1);
@@ -345,59 +354,93 @@
 
                     if (formattedDate) {
                         dateSet.add(formattedDate);
-                        dateIndices.push({ index: i, date: formattedDate });
                         lastParsedDate = formattedDate;
+                        
+                        let colSales = -1, colUnits = -1, colSessions = -1;
+
+                        // ★ 지능형 6칸 스캐너: 해당 날짜의 6칸 안에서 진짜 Sales, Units, Sessions 헤더를 찾아냅니다.
+                        for (let j = 0; j < colStep; j++) {
+                            let cIdx = i + j;
+                            if (cIdx >= maxCols) break;
+                            let mStr = metricRow && metricRow[cIdx] ? String(metricRow[cIdx]).trim().toLowerCase() : '';
+                            
+                            if (mStr === '') continue;
+
+                            if (mStr.includes('sales') && !mStr.includes('ad')) {
+                                colSales = cIdx;
+                            } 
+                            else if ((mStr.includes('units') || mStr.includes('sold')) && !mStr.includes('%')) {
+                                colUnits = cIdx;
+                            } 
+                            // % 나 percentage, rate 같은 단어를 철저히 배제하고 순수 session 글자만 스캔합니다.
+                            else if (mStr.includes('session') && !mStr.includes('%') && !mStr.includes('percentage') && !mStr.includes('rate')) {
+                                colSessions = cIdx;
+                            }
+                        }
+
+                        // 스캔 성공 시 오프셋 갱신, 헤더가 비어있어서 실패했다면 마지막 성공 오프셋 재사용
+                        if (colSales !== -1) lastOffsetSales = colSales - i;
+                        if (colUnits !== -1) lastOffsetUnits = colUnits - i;
+                        if (colSessions !== -1) lastOffsetSessions = colSessions - i;
+
+                        sheetDateMap.set(formattedDate, { 
+                            sales: i + lastOffsetSales, 
+                            units: i + lastOffsetUnits, 
+                            sessions: i + lastOffsetSessions 
+                        });
                     }
                 }
 
-                // 2. 글자에 의존하지 않고 "무조건 첫번째칸=Sales, 두번째칸=Units, 세번째칸=Sessions" 구조 추출
-                for (let r = 2; r < rows.length; r++) {
-                    const row = rows[r];
-                    const asin = String(row[0] || '').trim();
+                // 2. 찾아낸 정확한 인덱스를 바탕으로 "숫자 원본(Raw)" 배열에서 데이터를 안전하게 추출
+                for (let r = 2; r < rowsFmt.length; r++) {
+                    const rowFmt = rowsFmt[r];
+                    const rowRaw = rowsRaw[r];
+                    const asin = String(rowFmt[0] || '').trim();
                     
                     if (!asin || asin === '' || asin.toUpperCase() === 'ASIN') continue;
 
                     if (!productMap.has(asin)) {
                         productMap.set(asin, {
                             asin: asin,
-                            sku: String(row[1] || '-').trim(),
-                            category: String(row[3] || 'Uncategorized').trim(),
-                            name: String(row[4] || 'Unknown').trim(),
+                            sku: String(rowFmt[1] || '-').trim(),
+                            category: String(rowFmt[3] || 'Uncategorized').trim(),
+                            name: String(rowFmt[4] || 'Unknown').trim(),
                             daily: {}
                         });
                     }
 
                     let pData = productMap.get(asin);
 
-                    // 각 날짜별로 6칸 중 정확한 인덱스의 숫자만 뽑아옵니다
-                    for (let j = 0; j < dateIndices.length; j++) {
-                        const c = dateIndices[j].index;
-                        const d = dateIndices[j].date;
-                        
+                    for (let [d, indices] of sheetDateMap.entries()) {
                         if (!pData.daily[d]) pData.daily[d] = { sales: null, units: null, sessions: null };
                         
+                        // 구글 시트에서 숫자로 인식된 원본을 그대로 가져와 포맷 변형 버그를 완벽히 회피합니다.
                         const parseNumber = (cIdx) => {
-                            if (cIdx >= row.length) return null;
-                            let val = row[cIdx];
-                            if (val === null || val === undefined || val === '') return null; // 빈칸은 절대 0이 아닌 null로 보존
-                            let str = String(val).trim();
-                            if (str.startsWith('#') || str === '-') return null; // 엑셀 수식 에러나 대시(-) 방어
+                            if (!rowRaw || cIdx >= rowRaw.length) return null;
+                            let val = rowRaw[cIdx];
+                            if (val === null || val === undefined || val === '') return null; 
+                            
+                            // 원본 데이터가 숫자 타입이면 변형 없이 즉시 리턴 (3,500 -> 3500)
                             if (typeof val === 'number') return val;
+                            
+                            // 혹시 텍스트로 입력된 숫자라면 안전하게 변환
+                            let str = String(val).trim();
+                            if (str.startsWith('#') || str === '-') return null; 
                             str = str.replace(/[^0-9.,-]/g, '');
                             if (!str || str === '-') return null;
+                            
                             let lastComma = str.lastIndexOf(',');
                             let lastDot = str.lastIndexOf('.');
-                            // 유럽 포맷 대응 (ex: 2.251,62)
                             if (lastComma > lastDot && lastComma !== -1) str = str.replace(/\./g, '').replace(',', '.');
                             else str = str.replace(/,/g, '');
+                            
                             let num = parseFloat(str);
                             return isNaN(num) ? null : num;
                         };
 
-                        // 구조적 추출: c (Sales), c+1 (Units), c+2 (Sessions)
-                        const sales = parseNumber(c);
-                        const units = parseNumber(c + 1);
-                        const sessions = parseNumber(c + 2);
+                        const sales = parseNumber(indices.sales);
+                        const units = parseNumber(indices.units);
+                        const sessions = parseNumber(indices.sessions);
 
                         if (sales !== null) pData.daily[d].sales = (pData.daily[d].sales || 0) + sales;
                         if (units !== null) pData.daily[d].units = (pData.daily[d].units || 0) + units;
