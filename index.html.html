@@ -185,7 +185,6 @@
     </div>
 
     <script>
-        // Chart.js 기본 설정
         Chart.defaults.color = '#94a3b8';
         Chart.defaults.borderColor = 'rgba(51, 65, 85, 0.5)';
         Chart.defaults.font.family = "'Pretendard', -apple-system, sans-serif";
@@ -288,79 +287,94 @@
             }
         }
 
-        // 지능형 다중 시트 파싱 로직 (열 밀림 방지 & 수기 데이터 보호)
+        // ★강력해진 지능형 시각 스캔(Visual Scan) 로직★ 
+        // 열이 밀리든 삭제되든 글자를 눈으로 찾아내어 매핑합니다!
         function parseAndInitDashboard(workbook, targetSheets) {
             let dateSet = new Set();
             let productMap = new Map();
 
             targetSheets.forEach(sheetName => {
                 const worksheet = workbook.Sheets[sheetName];
-                const rows = XLSX.utils.sheet_to_json(worksheet, {header: 1, raw: false, defval: null});
+                const rows = XLSX.utils.sheet_to_json(worksheet, {header: 1, raw: false, defval: ''});
                 if (rows.length < 3) return;
 
                 const dateRow = rows[0];
-                const metricRow = rows[1]; // Sub-header (Sales, Units Sold, Sessions 등)
+                const metricRow = rows[1]; 
                 
                 let maxCols = Math.max(dateRow.length, metricRow ? metricRow.length : 0);
                 
                 let lastParsedDate = null;
-                const sheetDateMap = new Map(); // 각 날짜별로 정확히 몇 번째 열에 데이터가 있는지 매핑
+                const sheetDateMap = new Map(); 
 
-                // 1. 날짜 헤더와 세부 지표(Metric) 헤더 스캔
+                const addOneDay = (dateStr) => {
+                    if (!dateStr) return null;
+                    let [m, d] = dateStr.split('/').map(Number);
+                    let tempDate = new Date(2026, m - 1, d + 1); // 연도는 2026년 기준
+                    let newM = String(tempDate.getMonth() + 1).padStart(2, '0');
+                    let newD = String(tempDate.getDate()).padStart(2, '0');
+                    return `${newM}/${newD}`;
+                };
+
+                // 모든 열을 하나하나 스캔하며 "Sales", "Units", "Sessions" 글자를 찾아 연결
                 for (let i = 5; i < maxCols; i++) {
-                    let cellValue = dateRow[i];
+                    let dStrRaw = String(dateRow[i] || '').trim();
+                    let metricStr = metricRow && metricRow[i] ? String(metricRow[i]).trim().toLowerCase() : '';
                     
-                    // 빈 칸이면 근처에서 병합된 날짜 텍스트 찾기
-                    if (!cellValue && i < dateRow.length) {
-                        for(let j=1; j<6; j++) {
-                            if (dateRow[i+j]) { cellValue = dateRow[i+j]; break; }
-                        }
-                    }
-                    
-                    let formattedDate = null;
-                    if (cellValue && String(cellValue).trim() !== '') {
-                        let dStr = String(cellValue).trim();
-                        let match = dStr.match(/(\d{4})-(\d{2})-(\d{2})/);
+                    if (dStrRaw === '' && metricStr === '') continue;
+
+                    let parsedDate = null;
+                    if (dStrRaw !== '') {
+                        let match = dStrRaw.match(/(\d{4})-(\d{2})-(\d{2})/);
                         if (match) {
-                            formattedDate = `${match[2]}/${match[3]}`;
+                            parsedDate = `${match[2]}/${match[3]}`;
                         } else {
-                            let m = dStr.match(/(?:^|\D)(\d{1,2})[-\/\.](\d{1,2})(?:\D|$)/);
-                            if (m) formattedDate = `${m[1].padStart(2,'0')}/${m[2].padStart(2,'0')}`;
+                            let m = dStrRaw.match(/(?:^|\D)(\d{1,2})[-\/\.](\d{1,2})(?:\D|$)/);
+                            if (m) parsedDate = `${m[1].padStart(2,'0')}/${m[2].padStart(2,'0')}`;
                         }
                     }
 
-                    if (formattedDate) {
-                        lastParsedDate = formattedDate;
-                        dateSet.add(formattedDate);
-                        if (!sheetDateMap.has(formattedDate)) {
-                            sheetDateMap.set(formattedDate, { sales: -1, units: -1, sessions: -1 });
+                    // 헤더 텍스트 시각 스캔
+                    let isSales = metricStr.startsWith('sales');
+                    let isUnits = metricStr.includes('units') || metricStr.includes('sold');
+                    let isSessions = metricStr.includes('sessions') || metricStr.includes('session');
+
+                    if (parsedDate) {
+                        lastParsedDate = parsedDate;
+                    } else if (isSales && lastParsedDate) {
+                        // 날짜 칸은 비어있는데 'Sales' 글자가 또 나타났다면? -> 다음 날짜로 넘어간 것임
+                        let currentMap = sheetDateMap.get(lastParsedDate);
+                        if (currentMap && currentMap.sales !== -1) {
+                            lastParsedDate = addOneDay(lastParsedDate);
                         }
                     }
 
-                    // 열(Column) 밀림 현상 완벽 방지: 6칸을 강제 스킵하지 않고 글자를 직접 찾아 매핑
-                    if (lastParsedDate && metricRow && metricRow[i]) {
-                        let metricStr = String(metricRow[i]).trim().toLowerCase();
+                    // 찾은 컬럼 인덱스를 정확한 날짜에 매핑
+                    if (lastParsedDate && (isSales || isUnits || isSessions)) {
+                        dateSet.add(lastParsedDate);
+                        if (!sheetDateMap.has(lastParsedDate)) {
+                            sheetDateMap.set(lastParsedDate, { sales: -1, units: -1, sessions: -1 });
+                        }
+
                         let dMap = sheetDateMap.get(lastParsedDate);
-                        
-                        if (metricStr.includes('sales')) dMap.sales = i;
-                        else if (metricStr.includes('units') || metricStr.includes('sold')) dMap.units = i;
-                        else if (metricStr.includes('sessions') || metricStr.includes('session')) dMap.sessions = i;
+                        if (isSales && dMap.sales === -1) dMap.sales = i;
+                        if (isUnits && dMap.units === -1) dMap.units = i;
+                        if (isSessions && dMap.sessions === -1) dMap.sessions = i;
                     }
                 }
 
-                // 2. 매핑된 정확한 인덱스로 데이터 추출
+                // 매핑된 컬럼 인덱스를 바탕으로 데이터 추출
                 for (let r = 2; r < rows.length; r++) {
                     const row = rows[r];
-                    const asin = row[0];
+                    const asin = String(row[0] || '').trim();
                     
-                    if (!asin || String(asin).trim() === '' || String(asin).trim().toUpperCase() === 'ASIN') continue;
+                    if (!asin || asin === '' || asin.toUpperCase() === 'ASIN') continue;
 
                     if (!productMap.has(asin)) {
                         productMap.set(asin, {
                             asin: asin,
-                            sku: row[1] || '-',
-                            category: row[3] || 'Uncategorized',
-                            name: row[4] || 'Unknown',
+                            sku: String(row[1] || '-').trim(),
+                            category: String(row[3] || 'Uncategorized').trim(),
+                            name: String(row[4] || 'Unknown').trim(),
                             daily: {}
                         });
                     }
@@ -370,12 +384,13 @@
                     for (let [d, indices] of sheetDateMap.entries()) {
                         if (!pData.daily[d]) pData.daily[d] = { sales: null, units: null, sessions: null };
                         
+                        // ★ 개선: 빈칸은 무조건 null로 냅둬서 수학적 0으로 강제 변환되는 것을 막음
                         const parseNumber = (cIdx) => {
                             if (cIdx === -1 || cIdx >= row.length) return null;
                             let val = row[cIdx];
                             if (val === null || val === undefined || val === '') return null;
                             let str = String(val).trim();
-                            if (str.startsWith('#') || str === '-') return null; // 수식 에러 버그 방지
+                            if (str.startsWith('#') || str === '-') return null; // 수식 에러 방어
                             if (typeof val === 'number') return val;
                             str = str.replace(/[^0-9.,-]/g, '');
                             if (!str || str === '-') return null;
@@ -383,17 +398,27 @@
                             let lastDot = str.lastIndexOf('.');
                             if (lastComma > lastDot) str = str.replace(/\./g, '').replace(',', '.');
                             else str = str.replace(/,/g, '');
-                            return parseFloat(str);
+                            let num = parseFloat(str);
+                            return isNaN(num) ? null : num;
                         };
 
                         const sales = parseNumber(indices.sales);
                         const units = parseNumber(indices.units);
                         const sessions = parseNumber(indices.sessions);
 
-                        // 수기 데이터 보호 (무조건 0으로 덮어쓰거나 무시하지 않음)
-                        if (sales !== null && !isNaN(sales)) pData.daily[d].sales = (pData.daily[d].sales || 0) + sales;
-                        if (units !== null && !isNaN(units)) pData.daily[d].units = (pData.daily[d].units || 0) + units;
-                        if (sessions !== null && !isNaN(sessions)) pData.daily[d].sessions = (pData.daily[d].sessions || 0) + sessions;
+                        // 제품 단위에서도 null을 안전하게 보존
+                        if (sales !== null) {
+                            if (pData.daily[d].sales === null) pData.daily[d].sales = 0;
+                            pData.daily[d].sales += sales;
+                        }
+                        if (units !== null) {
+                            if (pData.daily[d].units === null) pData.daily[d].units = 0;
+                            pData.daily[d].units += units;
+                        }
+                        if (sessions !== null) {
+                            if (pData.daily[d].sessions === null) pData.daily[d].sessions = 0;
+                            pData.daily[d].sessions += sessions;
+                        }
                     }
                 }
             });
@@ -437,19 +462,29 @@
                  filteredProducts = [{ daily: {} }];
             }
 
+            // ★ 개선: 일별 합산 시에도 null을 완벽하게 보존하여 그래프 선 연결(spanGaps) 유도
             const aggregatedDaily = activeDates.map(d => {
                 let s = null, u = null, sess = null;
                 filteredProducts.forEach(p => {
                     if(p.daily && p.daily[d]) {
-                        if (p.daily[d].sales !== null) s = (s || 0) + p.daily[d].sales;
-                        if (p.daily[d].units !== null) u = (u || 0) + p.daily[d].units;
-                        if (p.daily[d].sessions !== null) sess = (sess || 0) + p.daily[d].sessions;
+                        if (p.daily[d].sales !== null) {
+                            if (s === null) s = 0;
+                            s += p.daily[d].sales;
+                        }
+                        if (p.daily[d].units !== null) {
+                            if (u === null) u = 0;
+                            u += p.daily[d].units;
+                        }
+                        if (p.daily[d].sessions !== null) {
+                            if (sess === null) sess = 0;
+                            sess += p.daily[d].sessions;
+                        }
                     }
                 });
-                // 아마존 딜레이 때문에 삭제했던 로직 완전 제거 -> 고객 수기 입력값(0이든 숫자든) 완벽 보존
                 return { date: d, sales: s, units: u, sessions: sess };
             });
 
+            // KPI 업데이트 시에만 0으로 처리 (화면 표시용)
             const totalSales = aggregatedDaily.reduce((sum, d) => sum + (d.sales || 0), 0);
             const totalUnits = aggregatedDaily.reduce((sum, d) => sum + (d.units || 0), 0);
             const totalSessions = aggregatedDaily.reduce((sum, d) => sum + (d.sessions || 0), 0);
@@ -472,7 +507,7 @@
                             backgroundColor: 'rgba(59, 130, 246, 0.1)',
                             borderWidth: 2,
                             tension: 0.4,
-                            spanGaps: true, // 빈칸은 무시하고 꺾은선을 부드럽게 이어줌
+                            spanGaps: true, // null 값이 있어도 꺾은선이 부드럽게 이어지게 함
                             pointRadius: 3,
                             pointHoverRadius: 6,
                             yAxisID: 'y',
@@ -527,9 +562,9 @@
                             backgroundColor: 'rgba(16, 185, 129, 0.1)',
                             borderWidth: 2,
                             tension: 0.4,
-                            spanGaps: true,
+                            spanGaps: true, // 세션 값이 며칠 비어있어도 앞뒤 점을 이어줌
                             pointBackgroundColor: '#10b981',
-                            pointRadius: 4,      // 끊겨있는 점도 눈에 잘 띄게 확대
+                            pointRadius: 4,      
                             pointHoverRadius: 7, 
                             fill: true
                         }
