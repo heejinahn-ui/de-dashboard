@@ -4,13 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Amazon DE Sales Dashboard - Auto Sync</title>
-    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <!-- Phosphor Icons -->
     <script src="https://unpkg.com/@phosphor-icons/web"></script>
-    <!-- SheetJS (Excel Parsing) -->
     <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
     <script>
         tailwind.config = {
@@ -47,7 +43,7 @@
         <p class="text-gray-300 font-medium tracking-wide">모든 월(Month)의 최신 데이터를 병합하고 있습니다...</p>
     </div>
 
-    <header class="flex flex-col xl:flex-row justify-between items-center mb-8 gap-4 bg-card p-6 rounded-2xl border border-gray-700 shadow-lg">
+    <header class="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4 bg-card p-6 rounded-2xl border border-gray-700 shadow-lg">
         <div>
             <div class="flex items-center gap-3">
                 <i class="ph-fill ph-amazon-logo text-white bg-[#FF9900] p-1.5 rounded-lg text-2xl"></i>
@@ -57,30 +53,42 @@
             <p class="text-gray-400 mt-2 text-sm">Google Sheets 실시간 연동 (다중 시트 자동 병합)</p>
         </div>
         
-        <div class="flex flex-wrap items-center gap-3 bg-darker px-4 py-2 rounded-xl border border-gray-600 shadow-inner">
-            <i class="ph ph-calendar-blank text-gray-400"></i>
-            <!-- 월(Month) 필터 추가 -->
-            <select id="monthFilter" class="bg-transparent border-none text-white text-sm font-medium focus:ring-0 outline-none cursor-pointer appearance-none">
-                <option value="All">전체 기간 (Month)</option>
-            </select>
-            <span class="text-gray-600 px-1">|</span>
-            <i class="ph ph-funnel text-gray-400"></i>
-            <select id="categoryFilter" class="bg-transparent border-none text-white text-sm font-medium focus:ring-0 outline-none cursor-pointer appearance-none">
-                <option value="All">전체 카테고리 (Category)</option>
-            </select>
-            <span class="text-gray-600 px-1">|</span>
-            <select id="productFilter" class="bg-transparent border-none text-white text-sm font-medium focus:ring-0 outline-none cursor-pointer appearance-none">
-                <option value="All">전체 라인업 (Product)</option>
-            </select>
-        </div>
-        
-        <div class="ml-4">
-            <button onclick="fetchGoogleSheetData()" class="flex items-center gap-2 bg-secondary hover:bg-emerald-600 text-white px-5 py-2.5 rounded-xl cursor-pointer transition-all duration-200 shadow-lg shadow-emerald-500/20 font-medium">
+        <div>
+            <button onclick="fetchGoogleSheetData()" class="flex items-center gap-2 bg-secondary hover:bg-emerald-600 text-white px-5 py-2.5 rounded-xl cursor-pointer transition-all duration-200 shadow-lg shadow-emerald-500/20 font-medium w-full md:w-auto justify-center">
                 <i class="ph ph-arrows-clockwise text-xl"></i>
                 <span>전체 데이터 동기화</span>
             </button>
         </div>
     </header>
+
+    <section class="bg-card p-6 rounded-2xl border border-gray-700 shadow-lg mb-8">
+        <h3 class="text-sm font-bold text-gray-400 mb-5 uppercase tracking-wider flex items-center gap-2">
+            <i class="ph ph-faders"></i> 대시보드 필터
+        </h3>
+        <div class="flex flex-col gap-5">
+            <div class="flex flex-col md:flex-row md:items-center gap-3">
+                <span class="text-gray-300 text-sm font-semibold w-24 flex items-center gap-1.5 shrink-0">
+                    <i class="ph ph-calendar-blank text-gray-400"></i> 조회 월
+                </span>
+                <div id="monthFilterContainer" class="flex flex-wrap gap-2">
+                    </div>
+            </div>
+            <div class="flex flex-col md:flex-row md:items-center gap-3">
+                <span class="text-gray-300 text-sm font-semibold w-24 flex items-center gap-1.5 shrink-0">
+                    <i class="ph ph-folder text-gray-400"></i> 카테고리
+                </span>
+                <div id="categoryFilterContainer" class="flex flex-wrap gap-2">
+                    </div>
+            </div>
+            <div class="flex flex-col md:flex-row md:items-center gap-3">
+                <span class="text-gray-300 text-sm font-semibold w-24 flex items-center gap-1.5 shrink-0">
+                    <i class="ph ph-tag text-gray-400"></i> 제품 라인
+                </span>
+                <div id="productFilterContainer" class="flex flex-wrap gap-2">
+                    </div>
+            </div>
+        </div>
+    </section>
 
     <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
         <div class="bg-card rounded-2xl p-6 border border-gray-700 shadow-xl relative overflow-hidden group">
@@ -173,6 +181,7 @@
     </div>
 
     <script>
+        // Chart.js 기본 설정
         Chart.defaults.color = '#94a3b8';
         Chart.defaults.borderColor = 'rgba(51, 65, 85, 0.5)';
         Chart.defaults.font.family = "'Pretendard', -apple-system, sans-serif";
@@ -181,12 +190,74 @@
         const formatNum = (num) => new Intl.NumberFormat('en-US').format(num);
 
         let globalDates = [];
-        let globalParsedData = []; // [ { asin, category, name, daily: { '03/01': {sales, units, sessions}, ... } } ]
+        let globalParsedData = []; 
         let salesVolumeChartInstance = null;
         let trafficChartInstance = null;
 
-        // "전체 문서"를 xlsx 포맷으로 불러오도록 변경된 URL (단일 시트 csv가 아님)
+        // 현재 선택된 필터 상태 관리
+        let currentMonth = 'All';
+        let currentCategory = 'All';
+        let currentProduct = 'All';
+
+        // 필터 옵션 배열
+        let availableMonths = [];
+        let availableCats = [];
+        let availableProds = [];
+
+        // 구글 시트 링크 (전체 엑셀 문서)
         const GOOGLE_SHEET_XLSX_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRfNx4DSlK4pk21magEzPZ318RI3FCxBUYZXQcQZKjTjVvT378Zss0u4rdmkw-u3gu9yS_FTu1hmwpH/pub?output=xlsx";
+
+        // 버튼(Chip) 형태의 필터를 렌더링하는 헬퍼 함수
+        function renderFilterButtons(containerId, options, currentValue, allLabel, callback) {
+            const container = document.getElementById(containerId);
+            container.innerHTML = '';
+            
+            // "전체(All)" 버튼 생성
+            const allBtn = document.createElement('button');
+            allBtn.innerText = allLabel;
+            allBtn.className = currentValue === 'All' 
+                ? 'px-4 py-1.5 rounded-full bg-primary text-white text-sm font-semibold shadow-lg shadow-blue-500/30 transition-all'
+                : 'px-4 py-1.5 rounded-full bg-darker border border-gray-600 text-gray-400 text-sm hover:bg-gray-700 hover:text-white transition-all';
+            allBtn.onclick = () => callback('All');
+            container.appendChild(allBtn);
+
+            // 각 옵션 버튼 생성
+            options.forEach(opt => {
+                const btn = document.createElement('button');
+                
+                // 월(Month)의 경우 숫자 뒤에 '월'을 붙여서 표시
+                let labelText = opt;
+                if (containerId === 'monthFilterContainer') {
+                    labelText = parseInt(opt, 10) + '월';
+                }
+
+                btn.innerText = labelText;
+                btn.className = currentValue === opt 
+                    ? 'px-4 py-1.5 rounded-full bg-primary text-white text-sm font-semibold shadow-lg shadow-blue-500/30 transition-all'
+                    : 'px-4 py-1.5 rounded-full bg-darker border border-gray-600 text-gray-400 text-sm hover:bg-gray-700 hover:text-white transition-all';
+                btn.onclick = () => callback(opt);
+                container.appendChild(btn);
+            });
+        }
+
+        // 전체 필터 영역을 다시 그리는 함수
+        function renderAllFilters() {
+            renderFilterButtons('monthFilterContainer', availableMonths, currentMonth, '전체 기간', (val) => {
+                currentMonth = val;
+                updateDashboard();
+                renderAllFilters(); // 클릭 효과 업데이트
+            });
+            renderFilterButtons('categoryFilterContainer', availableCats, currentCategory, '전체 카테고리', (val) => {
+                currentCategory = val;
+                updateDashboard();
+                renderAllFilters();
+            });
+            renderFilterButtons('productFilterContainer', availableProds, currentProduct, '전체 제품', (val) => {
+                currentProduct = val;
+                updateDashboard();
+                renderAllFilters();
+            });
+        }
 
         async function fetchGoogleSheetData() {
             const loading = document.getElementById('loading');
@@ -210,7 +281,7 @@
                 const data = new Uint8Array(arrayBuffer);
                 const workbook = XLSX.read(data, {type: 'array', raw: false});
                 
-                // "Sales by product" 라는 이름이 포함된 모든 시트(1월, 2월, 3월, 4월 등)를 찾음
+                // "Sales by product" 라는 이름이 포함된 모든 시트를 찾음
                 const targetSheets = workbook.SheetNames.filter(name => name.toLowerCase().includes("sales by product"));
                 
                 if (targetSheets.length === 0) {
@@ -227,22 +298,22 @@
             }
         }
 
-        // 다중 시트 데이터를 하나로 병합하는 강력한 파싱 로직
+        // 다중 시트 데이터를 하나로 병합하는 파싱 로직
         function parseAndInitDashboard(workbook, targetSheets) {
             let dateSet = new Set();
-            let productMap = new Map(); // ASIN을 고유 키로 사용하여 모든 달의 데이터를 통합
+            let productMap = new Map();
 
             targetSheets.forEach(sheetName => {
                 const worksheet = workbook.Sheets[sheetName];
                 const rows = XLSX.utils.sheet_to_json(worksheet, {header: 1, raw: false, defval: null});
-                if (rows.length < 3) return; // 데이터가 없는 빈 시트 스킵
+                if (rows.length < 3) return;
 
                 const dateRow = rows[0];
                 const dateIndices = [];
                 const startCol = 5; 
                 const colStep = 6;  
 
-                // 날짜 추출 로직
+                // 날짜 추출
                 for (let i = startCol; i < dateRow.length; i += colStep) {
                     let cellValue = dateRow[i];
                     if (!cellValue) {
@@ -254,7 +325,7 @@
                         let dStr = String(cellValue).trim();
                         let formattedDate = dStr; 
                         let match = dStr.match(/(\d{4})-(\d{2})-(\d{2})/);
-                        if (match) formattedDate = `${match[2]}/${match[3]}`; // MM/DD 형식
+                        if (match) formattedDate = `${match[2]}/${match[3]}`;
                         else if (dStr.includes('/')) {
                             let parts = dStr.split('/');
                             if(parts.length >= 2) formattedDate = `${parts[0].padStart(2,'0')}/${parts[1].padStart(2,'0')}`;
@@ -264,7 +335,7 @@
                     }
                 }
 
-                // 제품 데이터 추출 및 병합 로직
+                // 데이터 병합
                 for (let r = 2; r < rows.length; r++) {
                     const row = rows[r];
                     const asin = row[0];
@@ -277,7 +348,7 @@
                             sku: row[1] || '-',
                             category: row[3] || 'Uncategorized',
                             name: row[4] || 'Unknown',
-                            daily: {} // 날짜별 데이터를 담을 객체
+                            daily: {}
                         });
                     }
 
@@ -313,8 +384,7 @@
                 }
             });
 
-            globalDates = Array.from(dateSet).sort(); // 모든 달의 날짜를 모아서 시간순 정렬
-            
+            globalDates = Array.from(dateSet).sort();
             if (globalDates.length === 0) {
                 alert("날짜(Date) 데이터를 인식할 수 없습니다.");
                 return;
@@ -322,23 +392,15 @@
 
             globalParsedData = Array.from(productMap.values());
 
-            // 드롭다운 필터 초기화 (월, 카테고리, 제품)
-            const uniqueMonths = [...new Set(globalDates.map(d => d.split('/')[0]))].sort();
-            const uniqueCats = [...new Set(globalParsedData.map(d => d.category))];
-            const uniqueProds = [...new Set(globalParsedData.map(d => d.name))];
+            // 필터용 데이터 추출
+            availableMonths = [...new Set(globalDates.map(d => d.split('/')[0]))].sort();
+            availableCats = [...new Set(globalParsedData.map(d => d.category))];
+            availableProds = [...new Set(globalParsedData.map(d => d.name))];
 
-            const monthSelect = document.getElementById('monthFilter');
-            const categorySelect = document.getElementById('categoryFilter');
-            const productSelect = document.getElementById('productFilter');
-            
-            monthSelect.innerHTML = '<option value="All">전체 기간 (Month)</option>';
-            categorySelect.innerHTML = '<option value="All">전체 카테고리 (Category)</option>';
-            productSelect.innerHTML = '<option value="All">전체 라인업 (Product)</option>';
+            // 필터 UI 생성
+            renderAllFilters();
 
-            uniqueMonths.forEach(m => monthSelect.add(new Option(`${parseInt(m, 10)}월`, m)));
-            uniqueCats.forEach(c => categorySelect.add(new Option(c, c)));
-            uniqueProds.forEach(p => productSelect.add(new Option(p, p)));
-
+            // 뱃지 업데이트
             const badge = document.getElementById('dataStatusBadge');
             badge.className = "bg-emerald-500/20 text-emerald-400 border border-emerald-500/50 px-2.5 py-1 rounded-md text-xs font-semibold";
             const now = new Date();
@@ -352,26 +414,22 @@
         function updateDashboard() {
             if (globalDates.length === 0) return;
 
-            const monthFilterValue = document.getElementById('monthFilter').value;
-            const catFilterValue = document.getElementById('categoryFilter').value;
-            const prodFilterValue = document.getElementById('productFilter').value;
-
-            // 1. 날짜 필터링 (선택된 월만 활성화)
+            // 1. 날짜 필터링
             let activeDates = globalDates;
-            if (monthFilterValue !== 'All') {
-                activeDates = globalDates.filter(d => d.split('/')[0] === monthFilterValue);
+            if (currentMonth !== 'All') {
+                activeDates = globalDates.filter(d => d.split('/')[0] === currentMonth);
             }
 
             // 2. 카테고리/제품 필터링
             let filteredProducts = globalParsedData;
-            if (catFilterValue !== 'All') filteredProducts = filteredProducts.filter(p => p.category === catFilterValue);
-            if (prodFilterValue !== 'All') filteredProducts = filteredProducts.filter(p => p.name === prodFilterValue);
+            if (currentCategory !== 'All') filteredProducts = filteredProducts.filter(p => p.category === currentCategory);
+            if (currentProduct !== 'All') filteredProducts = filteredProducts.filter(p => p.name === currentProduct);
 
             if (filteredProducts.length === 0) {
                  filteredProducts = [{ daily: {} }];
             }
 
-            // 3. 필터링된 날짜와 제품을 바탕으로 일별 데이터 합산
+            // 3. 일별 합산
             const aggregatedDaily = activeDates.map(d => {
                 let s = 0, u = 0, sess = 0;
                 filteredProducts.forEach(p => {
@@ -384,7 +442,7 @@
                 return { date: d, sales: s, units: u, sessions: sess };
             });
 
-            // 4. 상단 KPI 업데이트
+            // 4. KPI 업데이트
             const totalSales = aggregatedDaily.reduce((sum, d) => sum + d.sales, 0);
             const totalUnits = aggregatedDaily.reduce((sum, d) => sum + d.units, 0);
             const totalSessions = aggregatedDaily.reduce((sum, d) => sum + d.sessions, 0);
@@ -480,14 +538,13 @@
                 }
             });
 
-            // 6. 하단 Table 업데이트 (현재 선택된 월/날짜 구간에 해당하는 합계만 계산)
+            // 6. 하단 Table 업데이트 
             const tbody = document.getElementById('tableBody');
             tbody.innerHTML = '';
             
             if(filteredProducts.length === 1 && !filteredProducts[0].asin) {
                 tbody.innerHTML = `<tr><td colspan="6" class="text-center py-8 text-gray-500">선택하신 조건에 해당하는 데이터가 없습니다.</td></tr>`;
             } else {
-                // 현재 기간 합계를 구해서 내림차순 정렬
                 const tableData = filteredProducts.filter(p => p.asin).map(p => {
                     let s = 0, u = 0, sess = 0;
                     activeDates.forEach(d => {
@@ -503,7 +560,7 @@
                 tableData.sort((a, b) => b.periodSales - a.periodSales);
 
                 tableData.forEach(p => {
-                    if (p.periodSales === 0 && p.periodUnits === 0 && p.periodSessions === 0) return; // 선택한 월에 데이터가 아예 없는 제품은 숨김
+                    if (p.periodSales === 0 && p.periodUnits === 0 && p.periodSessions === 0) return;
 
                     const tr = document.createElement('tr');
                     tr.className = 'hover:bg-gray-800/50 transition-colors';
@@ -522,12 +579,9 @@
             }
         }
 
-        // 이벤트 리스너 추가
-        document.getElementById('monthFilter').addEventListener('change', updateDashboard);
-        document.getElementById('categoryFilter').addEventListener('change', updateDashboard);
-        document.getElementById('productFilter').addEventListener('change', updateDashboard);
-
         window.onload = function() {
+            // 초기 빈 버튼 레이아웃 렌더링
+            renderAllFilters();
             fetchGoogleSheetData();
         };
     </script>
