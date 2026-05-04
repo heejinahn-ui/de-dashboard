@@ -4,9 +4,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Amazon DE Sales Dashboard - Auto Sync</title>
+    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Phosphor Icons -->
     <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <!-- SheetJS (Excel Parsing) -->
     <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
     <script>
         tailwind.config = {
@@ -298,7 +302,7 @@
             }
         }
 
-        // 다중 시트 데이터를 하나로 병합하는 파싱 로직
+        // 다중 시트 데이터를 하나로 병합하는 강력한 파싱 로직
         function parseAndInitDashboard(workbook, targetSheets) {
             let dateSet = new Set();
             let productMap = new Map();
@@ -309,29 +313,55 @@
                 if (rows.length < 3) return;
 
                 const dateRow = rows[0];
+                
+                // ★ 개선포인트 1: 가장 긴 열의 길이를 기준으로 스캔하여, 날짜 헤더가 누락되어도 데이터가 있는 곳까지 강제 탐색
+                let maxCols = 0;
+                for (let r = 0; r < rows.length; r++) {
+                    if (rows[r].length > maxCols) maxCols = rows[r].length;
+                }
+                
                 const dateIndices = [];
                 const startCol = 5; 
                 const colStep = 6;  
+                let lastParsedDate = null;
 
                 // 날짜 추출
-                for (let i = startCol; i < dateRow.length; i += colStep) {
+                for (let i = startCol; i < maxCols; i += colStep) {
                     let cellValue = dateRow[i];
-                    if (!cellValue) {
+                    
+                    // 병합셀 등 대비
+                    if (!cellValue && i < dateRow.length) {
                         for(let j=1; j<colStep; j++) {
                             if (dateRow[i+j]) { cellValue = dateRow[i+j]; break; }
                         }
                     }
+                    
+                    let formattedDate = null;
                     if (cellValue && String(cellValue).trim() !== '') {
                         let dStr = String(cellValue).trim();
-                        let formattedDate = dStr; 
                         let match = dStr.match(/(\d{4})-(\d{2})-(\d{2})/);
-                        if (match) formattedDate = `${match[2]}/${match[3]}`;
-                        else if (dStr.includes('/')) {
-                            let parts = dStr.split('/');
-                            if(parts.length >= 2) formattedDate = `${parts[0].padStart(2,'0')}/${parts[1].padStart(2,'0')}`;
+                        if (match) {
+                            formattedDate = `${match[2]}/${match[3]}`;
+                        } else {
+                            // 다양한 형태의 날짜(4.27, 4/27 등) 강제 변환
+                            let m = dStr.match(/(?:^|\D)(\d{1,2})[-\/\.](\d{1,2})(?:\D|$)/);
+                            if (m) formattedDate = `${m[1].padStart(2,'0')}/${m[2].padStart(2,'0')}`;
                         }
+                    }
+
+                    // ★ 개선포인트 2: 헤더가 비어있어도 이전 날짜를 기억했다가 +1일씩 자동으로 유추해서 날짜 부여
+                    if (!formattedDate && lastParsedDate) {
+                        let [m, d] = lastParsedDate.split('/').map(Number);
+                        let tempDate = new Date(2026, m - 1, d + 1);
+                        let newM = String(tempDate.getMonth() + 1).padStart(2, '0');
+                        let newD = String(tempDate.getDate()).padStart(2, '0');
+                        formattedDate = `${newM}/${newD}`;
+                    }
+
+                    if (formattedDate) {
                         dateSet.add(formattedDate);
                         dateIndices.push({ index: i, date: formattedDate });
+                        lastParsedDate = formattedDate; // 다음 루프 유추를 위해 갱신
                     }
                 }
 
@@ -358,28 +388,29 @@
                         const c = dateIndices[i].index;
                         const d = dateIndices[i].date;
                         
+                        // ★ 개선포인트 3: 데이터가 아예 안 들어온 상태(공란)는 0이 아니라 null로 처리하여 그래프가 0으로 곤두박질치지 않게 함
                         const parseNumber = (val) => {
-                            if (val === null || val === undefined || val === '') return 0;
+                            if (val === null || val === undefined || val === '') return null;
                             if (typeof val === 'number') return val;
                             let str = String(val).trim();
                             str = str.replace(/[^0-9.,-]/g, '');
-                            if (!str) return 0;
+                            if (!str) return null;
                             let lastComma = str.lastIndexOf(',');
                             let lastDot = str.lastIndexOf('.');
                             if (lastComma > lastDot) str = str.replace(/\./g, '').replace(',', '.');
                             else str = str.replace(/,/g, '');
-                            return parseFloat(str) || 0;
+                            return parseFloat(str);
                         };
 
                         const sales = parseNumber(row[c]);
                         const units = parseNumber(row[c+1]);
                         const sessions = parseNumber(row[c+2]);
 
-                        if (!pData.daily[d]) pData.daily[d] = { sales:0, units:0, sessions:0 };
+                        if (!pData.daily[d]) pData.daily[d] = { sales: null, units: null, sessions: null };
                         
-                        pData.daily[d].sales += sales;
-                        pData.daily[d].units += units;
-                        pData.daily[d].sessions += sessions;
+                        if (!isNaN(sales) && sales !== null) pData.daily[d].sales = (pData.daily[d].sales || 0) + sales;
+                        if (!isNaN(units) && units !== null) pData.daily[d].units = (pData.daily[d].units || 0) + units;
+                        if (!isNaN(sessions) && sessions !== null) pData.daily[d].sessions = (pData.daily[d].sessions || 0) + sessions;
                     }
                 }
             });
@@ -429,29 +460,29 @@
                  filteredProducts = [{ daily: {} }];
             }
 
-            // 3. 일별 합산
+            // 3. 일별 합산 (null 유지 연산)
             const aggregatedDaily = activeDates.map(d => {
-                let s = 0, u = 0, sess = 0;
+                let s = null, u = null, sess = null;
                 filteredProducts.forEach(p => {
                     if(p.daily && p.daily[d]) {
-                        s += p.daily[d].sales;
-                        u += p.daily[d].units;
-                        sess += p.daily[d].sessions;
+                        if (p.daily[d].sales !== null) s = (s || 0) + p.daily[d].sales;
+                        if (p.daily[d].units !== null) u = (u || 0) + p.daily[d].units;
+                        if (p.daily[d].sessions !== null) sess = (sess || 0) + p.daily[d].sessions;
                     }
                 });
                 return { date: d, sales: s, units: u, sessions: sess };
             });
 
-            // 4. KPI 업데이트
-            const totalSales = aggregatedDaily.reduce((sum, d) => sum + d.sales, 0);
-            const totalUnits = aggregatedDaily.reduce((sum, d) => sum + d.units, 0);
-            const totalSessions = aggregatedDaily.reduce((sum, d) => sum + d.sessions, 0);
+            // 4. KPI 업데이트 (null은 0으로 취급하여 총합 계산)
+            const totalSales = aggregatedDaily.reduce((sum, d) => sum + (d.sales || 0), 0);
+            const totalUnits = aggregatedDaily.reduce((sum, d) => sum + (d.units || 0), 0);
+            const totalSessions = aggregatedDaily.reduce((sum, d) => sum + (d.sessions || 0), 0);
 
             document.getElementById('kpiRevenue').innerText = formatEur(totalSales);
             document.getElementById('kpiVolume').innerText = formatNum(totalUnits) + ' 개';
             document.getElementById('kpiTraffic').innerText = formatNum(totalSessions) + ' 명';
 
-            // 5. 차트 업데이트
+            // 5. 차트 업데이트 (spanGaps: true 를 주어 데이터가 없는 날짜는 선을 끊지 않고 이어줌)
             if (salesVolumeChartInstance) salesVolumeChartInstance.destroy();
             const ctx1 = document.getElementById('salesVolumeChart').getContext('2d');
             salesVolumeChartInstance = new Chart(ctx1, {
@@ -466,6 +497,7 @@
                             backgroundColor: 'rgba(59, 130, 246, 0.1)',
                             borderWidth: 2,
                             tension: 0.4,
+                            spanGaps: true,
                             yAxisID: 'y',
                             fill: true,
                             order: 1
@@ -518,6 +550,7 @@
                             backgroundColor: 'rgba(16, 185, 129, 0.1)',
                             borderWidth: 2,
                             tension: 0.4,
+                            spanGaps: true,
                             pointBackgroundColor: '#10b981',
                             fill: true
                         }
@@ -549,9 +582,9 @@
                     let s = 0, u = 0, sess = 0;
                     activeDates.forEach(d => {
                         if (p.daily && p.daily[d]) {
-                            s += p.daily[d].sales;
-                            u += p.daily[d].units;
-                            sess += p.daily[d].sessions;
+                            s += p.daily[d].sales || 0;
+                            u += p.daily[d].units || 0;
+                            sess += p.daily[d].sessions || 0;
                         }
                     });
                     return { ...p, periodSales: s, periodUnits: u, periodSessions: sess };
