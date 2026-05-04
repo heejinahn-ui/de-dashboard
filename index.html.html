@@ -288,7 +288,8 @@
             }
         }
 
-        // ★강력해진 지능형 시각 스캔(Visual Scan) 로직★ 
+        // ★ 오작동하던 글자 인식(Visual Scan)을 버리고, 가장 안전하고 완벽한 "구조적 추출 방식(6칸 룰)"으로 원복했습니다.
+        // 열 개수가 절대 틀어지지 않는 고객님의 수기 시트에 100% 최적화된 로직입니다.
         function parseAndInitDashboard(workbook, targetSheets) {
             let dateSet = new Set();
             let productMap = new Map();
@@ -299,68 +300,56 @@
                 if (rows.length < 3) return;
 
                 const dateRow = rows[0];
-                const metricRow = rows[1]; 
+                let maxCols = 0;
+                for (let r = 0; r < rows.length; r++) {
+                    if (rows[r].length > maxCols) maxCols = rows[r].length;
+                }
                 
-                let maxCols = Math.max(dateRow.length, metricRow ? metricRow.length : 0);
-                
+                const dateIndices = [];
+                const startCol = 5; // F열부터 시작
+                const colStep = 6;  // 무조건 6칸 간격 
                 let lastParsedDate = null;
-                const sheetDateMap = new Map(); 
 
-                const addOneDay = (dateStr) => {
-                    if (!dateStr) return null;
-                    let [m, d] = dateStr.split('/').map(Number);
-                    let tempDate = new Date(2026, m - 1, d + 1);
-                    let newM = String(tempDate.getMonth() + 1).padStart(2, '0');
-                    let newD = String(tempDate.getDate()).padStart(2, '0');
-                    return `${newM}/${newD}`;
-                };
-
-                // 모든 열을 하나하나 스캔하며 "Sales", "Units", "Sessions" 글자를 찾아 정확한 열과 연결
-                for (let i = 5; i < maxCols; i++) {
-                    let dStrRaw = String(dateRow[i] || '').trim();
-                    let metricStr = metricRow && metricRow[i] ? String(metricRow[i]).trim().toLowerCase() : '';
+                // 1. 6칸 간격으로 날짜만 정확하게 스캔
+                for (let i = startCol; i < maxCols; i += colStep) {
+                    let cellValue = dateRow[i];
                     
-                    if (dStrRaw === '' && metricStr === '') continue;
-
-                    let parsedDate = null;
-                    if (dStrRaw !== '') {
-                        let match = dStrRaw.match(/(\d{4})-(\d{2})-(\d{2})/);
+                    // 병합이 풀려서 첫 칸이 비어있을 경우 근처 칸에서 날짜 찾기
+                    if (!cellValue && i < dateRow.length) {
+                        for(let j=1; j<colStep; j++) {
+                            if (dateRow[i+j]) { cellValue = dateRow[i+j]; break; }
+                        }
+                    }
+                    
+                    let formattedDate = null;
+                    if (cellValue && String(cellValue).trim() !== '') {
+                        let dStr = String(cellValue).trim();
+                        let match = dStr.match(/(\d{4})-(\d{2})-(\d{2})/);
                         if (match) {
-                            parsedDate = `${match[2]}/${match[3]}`;
+                            formattedDate = `${match[2]}/${match[3]}`;
                         } else {
-                            let m = dStrRaw.match(/(?:^|\D)(\d{1,2})[-\/\.](\d{1,2})(?:\D|$)/);
-                            if (m) parsedDate = `${m[1].padStart(2,'0')}/${m[2].padStart(2,'0')}`;
+                            let m = dStr.match(/(?:^|\D)(\d{1,2})[-\/\.](\d{1,2})(?:\D|$)/);
+                            if (m) formattedDate = `${m[1].padStart(2,'0')}/${m[2].padStart(2,'0')}`;
                         }
                     }
 
-                    // 헤더 텍스트 시각 스캔 (다른 열이 섞여도 정확히 세션 칸을 찾습니다)
-                    let isSales = metricStr.includes('sales') && !metricStr.includes('ad');
-                    let isUnits = metricStr.includes('units') || metricStr.includes('sold');
-                    let isSessions = metricStr.includes('sessions') || metricStr.includes('session');
-
-                    if (parsedDate) {
-                        lastParsedDate = parsedDate;
-                    } else if (isSales && lastParsedDate) {
-                        let currentMap = sheetDateMap.get(lastParsedDate);
-                        if (currentMap && currentMap.sales !== -1) {
-                            lastParsedDate = addOneDay(lastParsedDate);
-                        }
+                    // 날짜 헤더 자체를 빼먹고 값만 입력했을 경우, 이전 날짜를 바탕으로 +1일 자동 계산
+                    if (!formattedDate && lastParsedDate) {
+                        let [m, d] = lastParsedDate.split('/').map(Number);
+                        let tempDate = new Date(2026, m - 1, d + 1);
+                        let newM = String(tempDate.getMonth() + 1).padStart(2, '0');
+                        let newD = String(tempDate.getDate()).padStart(2, '0');
+                        formattedDate = `${newM}/${newD}`;
                     }
 
-                    if (lastParsedDate && (isSales || isUnits || isSessions)) {
-                        dateSet.add(lastParsedDate);
-                        if (!sheetDateMap.has(lastParsedDate)) {
-                            sheetDateMap.set(lastParsedDate, { sales: -1, units: -1, sessions: -1 });
-                        }
-
-                        let dMap = sheetDateMap.get(lastParsedDate);
-                        if (isSales && dMap.sales === -1) dMap.sales = i;
-                        if (isUnits && dMap.units === -1) dMap.units = i;
-                        if (isSessions && dMap.sessions === -1) dMap.sessions = i;
+                    if (formattedDate) {
+                        dateSet.add(formattedDate);
+                        dateIndices.push({ index: i, date: formattedDate });
+                        lastParsedDate = formattedDate;
                     }
                 }
 
-                // 매핑된 정확한 컬럼 인덱스를 바탕으로 데이터 추출
+                // 2. 글자에 의존하지 않고 "무조건 첫번째칸=Sales, 두번째칸=Units, 세번째칸=Sessions" 구조 추출
                 for (let r = 2; r < rows.length; r++) {
                     const row = rows[r];
                     const asin = String(row[0] || '').trim();
@@ -379,16 +368,18 @@
 
                     let pData = productMap.get(asin);
 
-                    for (let [d, indices] of sheetDateMap.entries()) {
+                    for (let j = 0; j < dateIndices.length; j++) {
+                        const c = dateIndices[j].index;
+                        const d = dateIndices[j].date;
+                        
                         if (!pData.daily[d]) pData.daily[d] = { sales: null, units: null, sessions: null };
                         
-                        // 빈칸은 무조건 null로 유지하여 수학적 오류(자동 0 처리)를 방지
                         const parseNumber = (cIdx) => {
-                            if (cIdx === -1 || cIdx >= row.length) return null;
+                            if (cIdx >= row.length) return null;
                             let val = row[cIdx];
-                            if (val === null || val === undefined || val === '') return null;
+                            if (val === null || val === undefined || val === '') return null; // 빈칸은 절대 0이 아닌 null로 보존
                             let str = String(val).trim();
-                            if (str.startsWith('#') || str === '-') return null; 
+                            if (str.startsWith('#') || str === '-') return null; // 엑셀 수식 에러 방어
                             if (typeof val === 'number') return val;
                             str = str.replace(/[^0-9.,-]/g, '');
                             if (!str || str === '-') return null;
@@ -400,23 +391,14 @@
                             return isNaN(num) ? null : num;
                         };
 
-                        const sales = parseNumber(indices.sales);
-                        const units = parseNumber(indices.units);
-                        const sessions = parseNumber(indices.sessions);
+                        // 구조적 안전 추출: FF(Sales), FG(Units), FH(Sessions) 완벽 대응
+                        const sales = parseNumber(c);
+                        const units = parseNumber(c + 1);
+                        const sessions = parseNumber(c + 2);
 
-                        // 제품 단위에서도 null을 안전하게 보존
-                        if (sales !== null) {
-                            if (pData.daily[d].sales === null) pData.daily[d].sales = 0;
-                            pData.daily[d].sales += sales;
-                        }
-                        if (units !== null) {
-                            if (pData.daily[d].units === null) pData.daily[d].units = 0;
-                            pData.daily[d].units += units;
-                        }
-                        if (sessions !== null) {
-                            if (pData.daily[d].sessions === null) pData.daily[d].sessions = 0;
-                            pData.daily[d].sessions += sessions;
-                        }
+                        if (sales !== null) pData.daily[d].sales = (pData.daily[d].sales || 0) + sales;
+                        if (units !== null) pData.daily[d].units = (pData.daily[d].units || 0) + units;
+                        if (sessions !== null) pData.daily[d].sessions = (pData.daily[d].sessions || 0) + sessions;
                     }
                 }
             });
@@ -460,29 +442,19 @@
                  filteredProducts = [{ daily: {} }];
             }
 
-            // ★ 해결포인트 1: 일별 합산 시에도 null을 완벽하게 보존
             const aggregatedDaily = activeDates.map(d => {
                 let s = null, u = null, sess = null;
                 filteredProducts.forEach(p => {
                     if(p.daily && p.daily[d]) {
-                        if (p.daily[d].sales !== null) {
-                            if (s === null) s = 0;
-                            s += p.daily[d].sales;
-                        }
-                        if (p.daily[d].units !== null) {
-                            if (u === null) u = 0;
-                            u += p.daily[d].units;
-                        }
-                        if (p.daily[d].sessions !== null) {
-                            if (sess === null) sess = 0;
-                            sess += p.daily[d].sessions;
-                        }
+                        if (p.daily[d].sales !== null) { s = (s || 0) + p.daily[d].sales; }
+                        if (p.daily[d].units !== null) { u = (u || 0) + p.daily[d].units; }
+                        if (p.daily[d].sessions !== null) { sess = (sess || 0) + p.daily[d].sessions; }
                     }
                 });
                 return { date: d, sales: s, units: u, sessions: sess };
             });
 
-            // ★ 해결포인트 2: 마지막으로 입력된 데이터가 있는 날짜 찾기
+            // 마지막으로 입력된 유효한 데이터가 있는 날짜 찾기
             let lastValidIndex = -1;
             for (let i = 0; i < aggregatedDaily.length; i++) {
                 if (aggregatedDaily[i].sales !== null || aggregatedDaily[i].units !== null || aggregatedDaily[i].sessions !== null) {
@@ -490,12 +462,12 @@
                 }
             }
 
-            // 과거의 빈칸은 0으로 만들어 선이 끊기지 않게 연결해주고, 미래의 빈칸은 null로 유지하여 차트를 멈춤
-            const chartSales = aggregatedDaily.map((d, i) => i <= lastValidIndex ? (d.sales || 0) : null);
-            const chartUnits = aggregatedDaily.map((d, i) => i <= lastValidIndex ? (d.units || 0) : null);
-            const chartSessions = aggregatedDaily.map((d, i) => i <= lastValidIndex ? (d.sessions || 0) : null);
+            // ★ 0으로 강제 치환하지 않고, null을 그대로 차트에 던져서 spanGaps가 선을 매끄럽게 잇도록 완벽 수정
+            const chartSales = aggregatedDaily.map((d, i) => i <= lastValidIndex ? d.sales : null);
+            const chartUnits = aggregatedDaily.map((d, i) => i <= lastValidIndex ? d.units : null);
+            const chartSessions = aggregatedDaily.map((d, i) => i <= lastValidIndex ? d.sessions : null);
 
-            // KPI 업데이트 (화면 표시용 총합)
+            // 상단 표시용 총합 (이곳에서만 0으로 취급하여 계산)
             const totalSales = chartSales.reduce((sum, val) => sum + (val || 0), 0);
             const totalUnits = chartUnits.reduce((sum, val) => sum + (val || 0), 0);
             const totalSessions = chartSessions.reduce((sum, val) => sum + (val || 0), 0);
@@ -518,7 +490,7 @@
                             backgroundColor: 'rgba(59, 130, 246, 0.1)',
                             borderWidth: 2,
                             tension: 0.4,
-                            spanGaps: true, 
+                            spanGaps: true, // 중간에 이빨이 빠진 날짜(null)가 있어도 선이 안 끊기고 이어집니다
                             pointRadius: 3,
                             pointHoverRadius: 6,
                             yAxisID: 'y',
@@ -573,7 +545,7 @@
                             backgroundColor: 'rgba(16, 185, 129, 0.1)',
                             borderWidth: 2,
                             tension: 0.4,
-                            spanGaps: true, // 점과 점 사이를 부드럽게 이어줌
+                            spanGaps: true, // 세션 꺾은선 절대 끊기지 않음
                             pointBackgroundColor: '#10b981',
                             pointRadius: 4,      
                             pointHoverRadius: 7, 
