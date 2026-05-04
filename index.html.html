@@ -288,8 +288,7 @@
             }
         }
 
-        // ★ 오작동하던 글자 인식(Visual Scan)을 버리고, 가장 안전하고 완벽한 "구조적 추출 방식(6칸 룰)"으로 원복했습니다.
-        // 열 개수가 절대 틀어지지 않는 고객님의 수기 시트에 100% 최적화된 로직입니다.
+        // ★ 궁극의 지능형 파싱 엔진: 6칸 단위로 쪼개고, 그 안에서 오직 순수 "Session"만 찾아냅니다!
         function parseAndInitDashboard(workbook, targetSheets) {
             let dateSet = new Set();
             let productMap = new Map();
@@ -300,21 +299,27 @@
                 if (rows.length < 3) return;
 
                 const dateRow = rows[0];
-                let maxCols = 0;
-                for (let r = 0; r < rows.length; r++) {
-                    if (rows[r].length > maxCols) maxCols = rows[r].length;
-                }
+                const metricRow = rows[1]; // 2행 (헤더)
+                
+                let maxCols = Math.max(dateRow.length, metricRow ? metricRow.length : 0);
                 
                 const dateIndices = [];
                 const startCol = 5; // F열부터 시작
-                const colStep = 6;  // 무조건 6칸 간격 
+                const colStep = 6;  // 무조건 6칸 간격 (고객님 시트 고정 룰)
                 let lastParsedDate = null;
+                
+                // 이전 날짜의 컬럼 순서를 기억해두는 변수 (만약 헤더가 비어있을 때를 대비)
+                let lastOffsetSales = 0;
+                let lastOffsetUnits = 1;
+                let lastOffsetSessions = 2;
 
-                // 1. 6칸 간격으로 날짜만 정확하게 스캔
+                const sheetDateMap = new Map();
+
+                // 1. 6칸 단위로 끊어서 날짜와 진짜 헤더 위치 찾기
                 for (let i = startCol; i < maxCols; i += colStep) {
                     let cellValue = dateRow[i];
                     
-                    // 병합이 풀려서 첫 칸이 비어있을 경우 근처 칸에서 날짜 찾기
+                    // 병합 대비
                     if (!cellValue && i < dateRow.length) {
                         for(let j=1; j<colStep; j++) {
                             if (dateRow[i+j]) { cellValue = dateRow[i+j]; break; }
@@ -333,7 +338,6 @@
                         }
                     }
 
-                    // 날짜 헤더 자체를 빼먹고 값만 입력했을 경우, 이전 날짜를 바탕으로 +1일 자동 계산
                     if (!formattedDate && lastParsedDate) {
                         let [m, d] = lastParsedDate.split('/').map(Number);
                         let tempDate = new Date(2026, m - 1, d + 1);
@@ -344,12 +348,45 @@
 
                     if (formattedDate) {
                         dateSet.add(formattedDate);
-                        dateIndices.push({ index: i, date: formattedDate });
                         lastParsedDate = formattedDate;
+                        
+                        let colSales = -1, colUnits = -1, colSessions = -1;
+
+                        // 6칸 (i부터 i+5까지) 안에서 진짜 헤더를 눈으로 찾습니다!
+                        for (let j = 0; j < colStep; j++) {
+                            let cIdx = i + j;
+                            if (cIdx >= maxCols) break;
+                            let mStr = metricRow && metricRow[cIdx] ? String(metricRow[cIdx]).trim().toLowerCase() : '';
+                            
+                            // 'Sales' 찾기
+                            if (mStr.includes('sales') && !mStr.includes('ad')) {
+                                colSales = cIdx;
+                            } 
+                            // 'Units' 찾기
+                            else if (mStr.includes('units') || mStr.includes('sold')) {
+                                colUnits = cIdx;
+                            } 
+                            // 'Sessions' 찾기 (★ 핵심: percentage, %, rate 같은 방해꾼 단어 완벽 차단)
+                            else if (mStr.includes('session') && !mStr.includes('%') && !mStr.includes('percentage') && !mStr.includes('rate')) {
+                                colSessions = cIdx;
+                            }
+                        }
+
+                        // 만약 사용자가 헤더를 비워뒀다면, 가장 마지막에 찾았던 순서를 그대로 적용
+                        if (colSales === -1) colSales = i + lastOffsetSales;
+                        else lastOffsetSales = colSales - i;
+
+                        if (colUnits === -1) colUnits = i + lastOffsetUnits;
+                        else lastOffsetUnits = colUnits - i;
+
+                        if (colSessions === -1) colSessions = i + lastOffsetSessions;
+                        else lastOffsetSessions = colSessions - i;
+
+                        sheetDateMap.set(formattedDate, { sales: colSales, units: colUnits, sessions: colSessions });
                     }
                 }
 
-                // 2. 글자에 의존하지 않고 "무조건 첫번째칸=Sales, 두번째칸=Units, 세번째칸=Sessions" 구조 추출
+                // 2. 찾아낸 정확한 인덱스 번호를 바탕으로 데이터 파싱
                 for (let r = 2; r < rows.length; r++) {
                     const row = rows[r];
                     const asin = String(row[0] || '').trim();
@@ -368,18 +405,15 @@
 
                     let pData = productMap.get(asin);
 
-                    for (let j = 0; j < dateIndices.length; j++) {
-                        const c = dateIndices[j].index;
-                        const d = dateIndices[j].date;
-                        
+                    for (let [d, indices] of sheetDateMap.entries()) {
                         if (!pData.daily[d]) pData.daily[d] = { sales: null, units: null, sessions: null };
                         
                         const parseNumber = (cIdx) => {
                             if (cIdx >= row.length) return null;
                             let val = row[cIdx];
-                            if (val === null || val === undefined || val === '') return null; // 빈칸은 절대 0이 아닌 null로 보존
+                            if (val === null || val === undefined || val === '') return null; 
                             let str = String(val).trim();
-                            if (str.startsWith('#') || str === '-') return null; // 엑셀 수식 에러 방어
+                            if (str.startsWith('#') || str === '-') return null; 
                             if (typeof val === 'number') return val;
                             str = str.replace(/[^0-9.,-]/g, '');
                             if (!str || str === '-') return null;
@@ -391,10 +425,9 @@
                             return isNaN(num) ? null : num;
                         };
 
-                        // 구조적 안전 추출: FF(Sales), FG(Units), FH(Sessions) 완벽 대응
-                        const sales = parseNumber(c);
-                        const units = parseNumber(c + 1);
-                        const sessions = parseNumber(c + 2);
+                        const sales = parseNumber(indices.sales);
+                        const units = parseNumber(indices.units);
+                        const sessions = parseNumber(indices.sessions);
 
                         if (sales !== null) pData.daily[d].sales = (pData.daily[d].sales || 0) + sales;
                         if (units !== null) pData.daily[d].units = (pData.daily[d].units || 0) + units;
@@ -462,12 +495,11 @@
                 }
             }
 
-            // ★ 0으로 강제 치환하지 않고, null을 그대로 차트에 던져서 spanGaps가 선을 매끄럽게 잇도록 완벽 수정
+            // null을 그대로 보존하여 차트 선이 매끄럽게 이어지도록 처리
             const chartSales = aggregatedDaily.map((d, i) => i <= lastValidIndex ? d.sales : null);
             const chartUnits = aggregatedDaily.map((d, i) => i <= lastValidIndex ? d.units : null);
             const chartSessions = aggregatedDaily.map((d, i) => i <= lastValidIndex ? d.sessions : null);
 
-            // 상단 표시용 총합 (이곳에서만 0으로 취급하여 계산)
             const totalSales = chartSales.reduce((sum, val) => sum + (val || 0), 0);
             const totalUnits = chartUnits.reduce((sum, val) => sum + (val || 0), 0);
             const totalSessions = chartSessions.reduce((sum, val) => sum + (val || 0), 0);
@@ -490,7 +522,7 @@
                             backgroundColor: 'rgba(59, 130, 246, 0.1)',
                             borderWidth: 2,
                             tension: 0.4,
-                            spanGaps: true, // 중간에 이빨이 빠진 날짜(null)가 있어도 선이 안 끊기고 이어집니다
+                            spanGaps: true, 
                             pointRadius: 3,
                             pointHoverRadius: 6,
                             yAxisID: 'y',
@@ -545,7 +577,7 @@
                             backgroundColor: 'rgba(16, 185, 129, 0.1)',
                             borderWidth: 2,
                             tension: 0.4,
-                            spanGaps: true, // 세션 꺾은선 절대 끊기지 않음
+                            spanGaps: true, 
                             pointBackgroundColor: '#10b981',
                             pointRadius: 4,      
                             pointHoverRadius: 7, 
