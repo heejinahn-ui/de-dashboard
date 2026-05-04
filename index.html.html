@@ -185,6 +185,7 @@
     </div>
 
     <script>
+        // Chart.js 기본 설정
         Chart.defaults.color = '#94a3b8';
         Chart.defaults.borderColor = 'rgba(51, 65, 85, 0.5)';
         Chart.defaults.font.family = "'Pretendard', -apple-system, sans-serif";
@@ -288,7 +289,6 @@
         }
 
         // ★강력해진 지능형 시각 스캔(Visual Scan) 로직★ 
-        // 열이 밀리든 삭제되든 글자를 눈으로 찾아내어 매핑합니다!
         function parseAndInitDashboard(workbook, targetSheets) {
             let dateSet = new Set();
             let productMap = new Map();
@@ -309,13 +309,13 @@
                 const addOneDay = (dateStr) => {
                     if (!dateStr) return null;
                     let [m, d] = dateStr.split('/').map(Number);
-                    let tempDate = new Date(2026, m - 1, d + 1); // 연도는 2026년 기준
+                    let tempDate = new Date(2026, m - 1, d + 1);
                     let newM = String(tempDate.getMonth() + 1).padStart(2, '0');
                     let newD = String(tempDate.getDate()).padStart(2, '0');
                     return `${newM}/${newD}`;
                 };
 
-                // 모든 열을 하나하나 스캔하며 "Sales", "Units", "Sessions" 글자를 찾아 연결
+                // 모든 열을 하나하나 스캔하며 "Sales", "Units", "Sessions" 글자를 찾아 정확한 열과 연결
                 for (let i = 5; i < maxCols; i++) {
                     let dStrRaw = String(dateRow[i] || '').trim();
                     let metricStr = metricRow && metricRow[i] ? String(metricRow[i]).trim().toLowerCase() : '';
@@ -333,22 +333,20 @@
                         }
                     }
 
-                    // 헤더 텍스트 시각 스캔
-                    let isSales = metricStr.startsWith('sales');
+                    // 헤더 텍스트 시각 스캔 (다른 열이 섞여도 정확히 세션 칸을 찾습니다)
+                    let isSales = metricStr.includes('sales') && !metricStr.includes('ad');
                     let isUnits = metricStr.includes('units') || metricStr.includes('sold');
                     let isSessions = metricStr.includes('sessions') || metricStr.includes('session');
 
                     if (parsedDate) {
                         lastParsedDate = parsedDate;
                     } else if (isSales && lastParsedDate) {
-                        // 날짜 칸은 비어있는데 'Sales' 글자가 또 나타났다면? -> 다음 날짜로 넘어간 것임
                         let currentMap = sheetDateMap.get(lastParsedDate);
                         if (currentMap && currentMap.sales !== -1) {
                             lastParsedDate = addOneDay(lastParsedDate);
                         }
                     }
 
-                    // 찾은 컬럼 인덱스를 정확한 날짜에 매핑
                     if (lastParsedDate && (isSales || isUnits || isSessions)) {
                         dateSet.add(lastParsedDate);
                         if (!sheetDateMap.has(lastParsedDate)) {
@@ -362,7 +360,7 @@
                     }
                 }
 
-                // 매핑된 컬럼 인덱스를 바탕으로 데이터 추출
+                // 매핑된 정확한 컬럼 인덱스를 바탕으로 데이터 추출
                 for (let r = 2; r < rows.length; r++) {
                     const row = rows[r];
                     const asin = String(row[0] || '').trim();
@@ -384,13 +382,13 @@
                     for (let [d, indices] of sheetDateMap.entries()) {
                         if (!pData.daily[d]) pData.daily[d] = { sales: null, units: null, sessions: null };
                         
-                        // ★ 개선: 빈칸은 무조건 null로 냅둬서 수학적 0으로 강제 변환되는 것을 막음
+                        // 빈칸은 무조건 null로 유지하여 수학적 오류(자동 0 처리)를 방지
                         const parseNumber = (cIdx) => {
                             if (cIdx === -1 || cIdx >= row.length) return null;
                             let val = row[cIdx];
                             if (val === null || val === undefined || val === '') return null;
                             let str = String(val).trim();
-                            if (str.startsWith('#') || str === '-') return null; // 수식 에러 방어
+                            if (str.startsWith('#') || str === '-') return null; 
                             if (typeof val === 'number') return val;
                             str = str.replace(/[^0-9.,-]/g, '');
                             if (!str || str === '-') return null;
@@ -462,7 +460,7 @@
                  filteredProducts = [{ daily: {} }];
             }
 
-            // ★ 개선: 일별 합산 시에도 null을 완벽하게 보존하여 그래프 선 연결(spanGaps) 유도
+            // ★ 해결포인트 1: 일별 합산 시에도 null을 완벽하게 보존
             const aggregatedDaily = activeDates.map(d => {
                 let s = null, u = null, sess = null;
                 filteredProducts.forEach(p => {
@@ -484,10 +482,23 @@
                 return { date: d, sales: s, units: u, sessions: sess };
             });
 
-            // KPI 업데이트 시에만 0으로 처리 (화면 표시용)
-            const totalSales = aggregatedDaily.reduce((sum, d) => sum + (d.sales || 0), 0);
-            const totalUnits = aggregatedDaily.reduce((sum, d) => sum + (d.units || 0), 0);
-            const totalSessions = aggregatedDaily.reduce((sum, d) => sum + (d.sessions || 0), 0);
+            // ★ 해결포인트 2: 마지막으로 입력된 데이터가 있는 날짜 찾기
+            let lastValidIndex = -1;
+            for (let i = 0; i < aggregatedDaily.length; i++) {
+                if (aggregatedDaily[i].sales !== null || aggregatedDaily[i].units !== null || aggregatedDaily[i].sessions !== null) {
+                    lastValidIndex = i;
+                }
+            }
+
+            // 과거의 빈칸은 0으로 만들어 선이 끊기지 않게 연결해주고, 미래의 빈칸은 null로 유지하여 차트를 멈춤
+            const chartSales = aggregatedDaily.map((d, i) => i <= lastValidIndex ? (d.sales || 0) : null);
+            const chartUnits = aggregatedDaily.map((d, i) => i <= lastValidIndex ? (d.units || 0) : null);
+            const chartSessions = aggregatedDaily.map((d, i) => i <= lastValidIndex ? (d.sessions || 0) : null);
+
+            // KPI 업데이트 (화면 표시용 총합)
+            const totalSales = chartSales.reduce((sum, val) => sum + (val || 0), 0);
+            const totalUnits = chartUnits.reduce((sum, val) => sum + (val || 0), 0);
+            const totalSessions = chartSessions.reduce((sum, val) => sum + (val || 0), 0);
 
             document.getElementById('kpiRevenue').innerText = formatEur(totalSales);
             document.getElementById('kpiVolume').innerText = formatNum(totalUnits) + ' 개';
@@ -502,12 +513,12 @@
                     datasets: [
                         {
                             label: 'Sales (€)',
-                            data: aggregatedDaily.map(d => d.sales),
+                            data: chartSales,
                             borderColor: '#3b82f6',
                             backgroundColor: 'rgba(59, 130, 246, 0.1)',
                             borderWidth: 2,
                             tension: 0.4,
-                            spanGaps: true, // null 값이 있어도 꺾은선이 부드럽게 이어지게 함
+                            spanGaps: true, 
                             pointRadius: 3,
                             pointHoverRadius: 6,
                             yAxisID: 'y',
@@ -516,7 +527,7 @@
                         },
                         {
                             label: 'Units Sold',
-                            data: aggregatedDaily.map(d => d.units),
+                            data: chartUnits,
                             type: 'bar',
                             backgroundColor: '#a855f7',
                             borderRadius: 4,
@@ -557,12 +568,12 @@
                     datasets: [
                         {
                             label: 'Sessions',
-                            data: aggregatedDaily.map(d => d.sessions),
+                            data: chartSessions,
                             borderColor: '#10b981',
                             backgroundColor: 'rgba(16, 185, 129, 0.1)',
                             borderWidth: 2,
                             tension: 0.4,
-                            spanGaps: true, // 세션 값이 며칠 비어있어도 앞뒤 점을 이어줌
+                            spanGaps: true, // 점과 점 사이를 부드럽게 이어줌
                             pointBackgroundColor: '#10b981',
                             pointRadius: 4,      
                             pointHoverRadius: 7, 
