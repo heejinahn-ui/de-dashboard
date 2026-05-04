@@ -49,12 +49,12 @@
 
     <header class="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4 bg-card p-6 rounded-2xl border border-gray-700 shadow-lg">
         <div>
-            <div class="flex items-center gap-3">
-                <i class="ph-fill ph-amazon-logo text-white bg-[#FF9900] p-1.5 rounded-lg text-2xl"></i>
-                <h1 class="text-3xl font-bold">Amazon DE 성과 대시보드</h1>
-                <span id="dataStatusBadge" class="bg-gray-500/20 text-gray-400 border border-gray-500/50 px-2.5 py-1 rounded-md text-xs font-semibold">동기화 대기중</span>
+            <div class="flex items-baseline gap-3">
+                <i class="ph-fill ph-amazon-logo text-white bg-[#FF9900] p-1.5 rounded-lg text-2xl relative top-1"></i>
+                <h1 class="text-3xl font-bold">Amazon DE 성과 대시보드 <span class="text-lg text-blue-400 font-semibold ml-1">v3.0</span></h1>
+                <span id="dataStatusBadge" class="bg-gray-500/20 text-gray-400 border border-gray-500/50 px-2.5 py-1 rounded-md text-xs font-semibold ml-2">동기화 대기중</span>
             </div>
-            <p class="text-gray-400 mt-2 text-sm">Google Sheets 실시간 연동 (다중 시트 자동 병합)</p>
+            <p class="text-gray-400 mt-2 text-sm">Google Sheets 실시간 연동 (다중 시트 6칸 정밀 병합 방식)</p>
         </div>
         
         <div>
@@ -259,10 +259,11 @@
             try {
                 let response;
                 try {
-                    response = await fetch(GOOGLE_SHEET_XLSX_URL);
+                    // 구글 시트 직통 연결 방식을 최우선으로 적용 (캐시 방지용 난수 쿼리 추가)
+                    response = await fetch(GOOGLE_SHEET_XLSX_URL + "&t=" + new Date().getTime());
                     if (!response.ok) throw new Error('직통 연결 실패');
                 } catch (err) {
-                    console.log('직통 연결 실패, 프록시 서버 우회 시도 중...');
+                    console.log('직통 연결 실패, 프록시 우회 시도 중...');
                     const proxyUrl = "https://api.allorigins.win/raw?url=" + encodeURIComponent(GOOGLE_SHEET_XLSX_URL);
                     response = await fetch(proxyUrl);
                     if (!response.ok) throw new Error('프록시 연결 실패');
@@ -288,7 +289,7 @@
             }
         }
 
-        // ★ 궁극의 지능형 파싱 엔진: 6칸 단위로 쪼개고, 그 안에서 오직 순수 "Session"만 찾아냅니다!
+        // ★ v3.0 절대 추출 로직: 열 개수 6칸 간격 (고객님의 규칙)을 절대적으로 신뢰하는 원복 버전
         function parseAndInitDashboard(workbook, targetSheets) {
             let dateSet = new Set();
             let productMap = new Map();
@@ -299,27 +300,22 @@
                 if (rows.length < 3) return;
 
                 const dateRow = rows[0];
-                const metricRow = rows[1]; // 2행 (헤더)
                 
-                let maxCols = Math.max(dateRow.length, metricRow ? metricRow.length : 0);
+                // 각 행의 최대 길이를 스캔하여 끝까지 추적 (4/27 이후 FF열 ~ GC열 등)
+                let maxCols = 0;
+                for (let r = 0; r < rows.length; r++) {
+                    if (rows[r].length > maxCols) maxCols = rows[r].length;
+                }
                 
                 const dateIndices = [];
-                const startCol = 5; // F열부터 시작
-                const colStep = 6;  // 무조건 6칸 간격 (고객님 시트 고정 룰)
+                const startCol = 5; // F열 = 5 (0-index 기준)
+                const colStep = 6;  // 6칸 간격 룰
                 let lastParsedDate = null;
-                
-                // 이전 날짜의 컬럼 순서를 기억해두는 변수 (만약 헤더가 비어있을 때를 대비)
-                let lastOffsetSales = 0;
-                let lastOffsetUnits = 1;
-                let lastOffsetSessions = 2;
 
-                const sheetDateMap = new Map();
-
-                // 1. 6칸 단위로 끊어서 날짜와 진짜 헤더 위치 찾기
+                // 1. 6칸 간격으로 날짜를 추적합니다.
                 for (let i = startCol; i < maxCols; i += colStep) {
                     let cellValue = dateRow[i];
                     
-                    // 병합 대비
                     if (!cellValue && i < dateRow.length) {
                         for(let j=1; j<colStep; j++) {
                             if (dateRow[i+j]) { cellValue = dateRow[i+j]; break; }
@@ -338,6 +334,7 @@
                         }
                     }
 
+                    // 날짜 칸이 아예 없어도 무조건 하루씩 추가해 4/27, 4/28, 4/29 등을 강제 생성합니다!
                     if (!formattedDate && lastParsedDate) {
                         let [m, d] = lastParsedDate.split('/').map(Number);
                         let tempDate = new Date(2026, m - 1, d + 1);
@@ -348,45 +345,12 @@
 
                     if (formattedDate) {
                         dateSet.add(formattedDate);
+                        dateIndices.push({ index: i, date: formattedDate });
                         lastParsedDate = formattedDate;
-                        
-                        let colSales = -1, colUnits = -1, colSessions = -1;
-
-                        // 6칸 (i부터 i+5까지) 안에서 진짜 헤더를 눈으로 찾습니다!
-                        for (let j = 0; j < colStep; j++) {
-                            let cIdx = i + j;
-                            if (cIdx >= maxCols) break;
-                            let mStr = metricRow && metricRow[cIdx] ? String(metricRow[cIdx]).trim().toLowerCase() : '';
-                            
-                            // 'Sales' 찾기
-                            if (mStr.includes('sales') && !mStr.includes('ad')) {
-                                colSales = cIdx;
-                            } 
-                            // 'Units' 찾기
-                            else if (mStr.includes('units') || mStr.includes('sold')) {
-                                colUnits = cIdx;
-                            } 
-                            // 'Sessions' 찾기 (★ 핵심: percentage, %, rate 같은 방해꾼 단어 완벽 차단)
-                            else if (mStr.includes('session') && !mStr.includes('%') && !mStr.includes('percentage') && !mStr.includes('rate')) {
-                                colSessions = cIdx;
-                            }
-                        }
-
-                        // 만약 사용자가 헤더를 비워뒀다면, 가장 마지막에 찾았던 순서를 그대로 적용
-                        if (colSales === -1) colSales = i + lastOffsetSales;
-                        else lastOffsetSales = colSales - i;
-
-                        if (colUnits === -1) colUnits = i + lastOffsetUnits;
-                        else lastOffsetUnits = colUnits - i;
-
-                        if (colSessions === -1) colSessions = i + lastOffsetSessions;
-                        else lastOffsetSessions = colSessions - i;
-
-                        sheetDateMap.set(formattedDate, { sales: colSales, units: colUnits, sessions: colSessions });
                     }
                 }
 
-                // 2. 찾아낸 정확한 인덱스 번호를 바탕으로 데이터 파싱
+                // 2. 글자에 의존하지 않고 "무조건 첫번째칸=Sales, 두번째칸=Units, 세번째칸=Sessions" 구조 추출
                 for (let r = 2; r < rows.length; r++) {
                     const row = rows[r];
                     const asin = String(row[0] || '').trim();
@@ -405,29 +369,35 @@
 
                     let pData = productMap.get(asin);
 
-                    for (let [d, indices] of sheetDateMap.entries()) {
+                    // 각 날짜별로 6칸 중 정확한 인덱스의 숫자만 뽑아옵니다
+                    for (let j = 0; j < dateIndices.length; j++) {
+                        const c = dateIndices[j].index;
+                        const d = dateIndices[j].date;
+                        
                         if (!pData.daily[d]) pData.daily[d] = { sales: null, units: null, sessions: null };
                         
                         const parseNumber = (cIdx) => {
                             if (cIdx >= row.length) return null;
                             let val = row[cIdx];
-                            if (val === null || val === undefined || val === '') return null; 
+                            if (val === null || val === undefined || val === '') return null; // 빈칸은 절대 0이 아닌 null로 보존
                             let str = String(val).trim();
-                            if (str.startsWith('#') || str === '-') return null; 
+                            if (str.startsWith('#') || str === '-') return null; // 엑셀 수식 에러나 대시(-) 방어
                             if (typeof val === 'number') return val;
                             str = str.replace(/[^0-9.,-]/g, '');
                             if (!str || str === '-') return null;
                             let lastComma = str.lastIndexOf(',');
                             let lastDot = str.lastIndexOf('.');
-                            if (lastComma > lastDot) str = str.replace(/\./g, '').replace(',', '.');
+                            // 유럽 포맷 대응 (ex: 2.251,62)
+                            if (lastComma > lastDot && lastComma !== -1) str = str.replace(/\./g, '').replace(',', '.');
                             else str = str.replace(/,/g, '');
                             let num = parseFloat(str);
                             return isNaN(num) ? null : num;
                         };
 
-                        const sales = parseNumber(indices.sales);
-                        const units = parseNumber(indices.units);
-                        const sessions = parseNumber(indices.sessions);
+                        // 구조적 추출: c (Sales), c+1 (Units), c+2 (Sessions)
+                        const sales = parseNumber(c);
+                        const units = parseNumber(c + 1);
+                        const sessions = parseNumber(c + 2);
 
                         if (sales !== null) pData.daily[d].sales = (pData.daily[d].sales || 0) + sales;
                         if (units !== null) pData.daily[d].units = (pData.daily[d].units || 0) + units;
@@ -495,11 +465,12 @@
                 }
             }
 
-            // null을 그대로 보존하여 차트 선이 매끄럽게 이어지도록 처리
+            // null을 그대로 보존하여 차트 선이 매끄럽게 이어지도록 처리 (spanGaps 연동)
             const chartSales = aggregatedDaily.map((d, i) => i <= lastValidIndex ? d.sales : null);
             const chartUnits = aggregatedDaily.map((d, i) => i <= lastValidIndex ? d.units : null);
             const chartSessions = aggregatedDaily.map((d, i) => i <= lastValidIndex ? d.sessions : null);
 
+            // 총합 계산 (화면 표시용)
             const totalSales = chartSales.reduce((sum, val) => sum + (val || 0), 0);
             const totalUnits = chartUnits.reduce((sum, val) => sum + (val || 0), 0);
             const totalSessions = chartSessions.reduce((sum, val) => sum + (val || 0), 0);
